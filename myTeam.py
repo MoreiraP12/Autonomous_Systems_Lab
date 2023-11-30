@@ -231,13 +231,13 @@ class ReflexCaptureAgent(CaptureAgent):
         enemy_1_pos_img = np.uint8(np.array(self.get_enemy_position_img(enemy1))*255)
         enemy_1_pos_img = enemy_1_pos_img[::-1]#The rows are reversed
         time_left = game_state.data.timeleft
-        plt.imsave(f'./agents/A*_Bayes/images/{str(time_left)}enemy_1_pos_img.png', enemy_1_pos_img, cmap='gray')
+        plt.imsave(f'agents\custom\images\{str(time_left)}enemy_1_pos_img.png', enemy_1_pos_img, cmap='gray')
         enemy_2_pos_img = np.uint8(np.array(self.get_enemy_position_img(enemy2))*255)[::-1]#The rows are reversed
-        plt.imsave(f'./agents/A*_Bayes/images/{str(time_left)}enemy_2_pos_img.png', enemy_2_pos_img, cmap='gray')
+        plt.imsave(f'agents\custom\images\{str(time_left)}enemy_2_pos_img.png', enemy_2_pos_img, cmap='gray')
         
         #Layer 2: Danger Zone based on scared
         danger_zone_img = np.array(self.danger_zone_img(enemy1, enemy2, game_state))#transpose because it comes in a col,row form
-        plt.imsave(f'./agents/A*_Bayes/images/{str(time_left)}danger_zone.png', danger_zone_img, cmap='gray')
+        plt.imsave(f'agents\custom\images\{str(time_left)}danger_zone.png', danger_zone_img, cmap='gray')
         
         #Layer 3: Food
         food =  self.get_food_you_are_defending(game_state).as_list()
@@ -245,7 +245,7 @@ class ReflexCaptureAgent(CaptureAgent):
         for col, row in food:
             food_img[row, col] = 1
         food_img = food_img[::-1]#The rows are reversed
-        plt.imsave(f'./agents/A*_Bayes/images/{str(time_left)}Food.png', food_img, cmap='gray')
+        plt.imsave(f'agents\custom\images\{str(time_left)}Food.png', food_img, cmap='gray')
 
         #Layer 4: Enemy food
         food_enemy =  self.get_food(game_state).as_list()
@@ -253,19 +253,19 @@ class ReflexCaptureAgent(CaptureAgent):
         for col, row in food_enemy:
             food_enemy_img[row, col] = 1
         food_enemy_img = food_enemy_img[::-1]
-        plt.imsave(f'./agents/A*_Bayes/images/{str(time_left)}Food_enemy.png', food_enemy_img, cmap='gray')
+        plt.imsave(f'agents\custom\images\{str(time_left)}Food_enemy.png', food_enemy_img, cmap='gray')
 
         #Layer 5: Agent Position
         agent_pos =  game_state.get_agent_position(self.index)
         agent_pos_img = np.zeros_like(enemy_1_pos_img).astype(np.uint8)
         agent_pos_img[agent_pos[1],agent_pos[0]] = 1
         agent_pos_img = agent_pos_img[::-1]
-        plt.imsave(f'./agents/A*_Bayes/images/{str(time_left)}Agent_pos.png', agent_pos_img, cmap='gray')
+        plt.imsave(f'agents\custom\images\{str(time_left)}Agent_pos.png', agent_pos_img, cmap='gray')
         
         #Layer 6: Walls
         walls_img =  np.array(game_state.get_walls().data).T.astype(np.uint8)[::-1]
         # Save using matplotlib
-        plt.imsave(f'./agents/A*_Bayes/images/{str(time_left)}walls.png', walls_img, cmap='gray')
+        plt.imsave(f'agents\custom\images\{str(time_left)}walls.png', walls_img, cmap='gray')
         
         #Layer 7: Capsules
         capsules = self.get_capsules(game_state)
@@ -273,7 +273,7 @@ class ReflexCaptureAgent(CaptureAgent):
         for col, row in capsules:
             capsules_img[row, col] = 1
         capsules_img = capsules_img[::-1]
-        plt.imsave(f'./agents/A*_Bayes/images/{str(time_left)}capsules_img.png', capsules_img, cmap='gray')
+        plt.imsave(f'agents\custom\images\{str(time_left)}capsules_img.png', capsules_img, cmap='gray')
 
         #Layer 8: Capsules the enemy is trying to get
         capsules_defending =  self.get_capsules_you_are_defending(game_state)
@@ -281,7 +281,7 @@ class ReflexCaptureAgent(CaptureAgent):
         for col, row in capsules_defending:
             capsules_defending_img[row, col] = 1
         capsules_defending_img = capsules_defending_img[::-1]
-        plt.imsave(f'./agents/A*_Bayes/images/{str(time_left)}capsules_defending_img.png', capsules_defending_img, cmap='gray')
+        plt.imsave(f'agents\custom\images\{str(time_left)}capsules_defending_img.png', capsules_defending_img, cmap='gray')
 
         #Get the enemies location
         most_prob_e1_loc = np.unravel_index(np.argmax(enemy_1_pos_img), enemy_1_pos_img.shape)
@@ -341,7 +341,78 @@ class ReflexCaptureAgent(CaptureAgent):
             return best_action
 
         return random.choice(best_actions)
-   
+    def get_successors(self, position):
+        """Get successor positions from the given position."""
+        successors = []
+        for action in [Directions.NORTH, Directions.SOUTH, Directions.EAST, Directions.WEST]:
+            x, y = position
+            dx, dy = 0, 0
+            if action == Directions.NORTH:
+                dy = 1
+            elif action == Directions.SOUTH:
+                dy = -1
+            elif action == Directions.EAST:
+                dx = 1
+            elif action == Directions.WEST:
+                dx = -1
+
+            next_position = (x + dx, y + dy)
+            if not self.walls[next_position[0]][next_position[1]]:  # Check for walls
+                successors.append(next_position)
+        return successors
+    def calculate_min_distance_target_point(self, game_state):
+        # Compute the most probable enemy locations
+        enemy1, enemy2 = self.get_opponents(game_state)
+        enemy_1_pos_img = self.get_enemy_position_img(enemy1)
+        enemy_2_pos_img = self.get_enemy_position_img(enemy2)
+        most_prob_e1_loc = np.unravel_index(np.argmax(enemy_1_pos_img), enemy_1_pos_img.shape)
+        most_prob_e2_loc = np.unravel_index(np.argmax(enemy_2_pos_img), enemy_2_pos_img.shape)
+
+        # Compute the closest food point to the enemies
+        food = self.get_food_you_are_defending(game_state).as_list()
+        distances_e_2_myfood = []
+        for col, row in food:
+            distances_e_2_myfood.append((util.manhattanDistance(most_prob_e1_loc, (row, col)), (row, col)))
+            distances_e_2_myfood.append((util.manhattanDistance(most_prob_e2_loc, (row, col)), (row, col)))
+
+        min_distance_tuple = min(distances_e_2_myfood, key=lambda x: x[0])
+        return min_distance_tuple[1]
+    def a_star_search(self, start, goal):
+        """Perform A* search from start to goal."""
+
+        def heuristic(a, b):
+            """Manhattan distance heuristic."""
+            return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+        frontier = util.PriorityQueue()
+        frontier.push(start, 0)
+        came_from = {}
+        cost_so_far = {}
+        came_from[start] = None
+        cost_so_far[start] = 0
+
+        while not frontier.isEmpty():
+            current = frontier.pop()
+
+            if current == goal:
+                break
+
+            for next in self.get_successors(current):
+                new_cost = cost_so_far[current] + 1  # Assuming uniform cost
+                if next not in cost_so_far or new_cost < cost_so_far[next]:
+                    cost_so_far[next] = new_cost
+                    priority = new_cost + heuristic(goal, next)
+                    frontier.push(next, priority)
+                    came_from[next] = current
+
+        # Reconstruct path
+        path = []
+        while current != start:
+            path.append(current)
+            current = came_from[current]
+        path.reverse()
+        return path
+
 
     
 class OffensiveReflexAgent(ReflexCaptureAgent):
@@ -409,36 +480,35 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
     """
 
     def choose_action(self, game_state):
-        """
-        Picks among the actions with the highest Q(s,a).
-        """
-        print("DEFENSIVE ##################")
+        # Calculate the target point
+        target = self.calculate_min_distance_target_point(game_state)
 
-        actions = game_state.get_legal_actions(self.index)
+        # A* pathfinding towards the target
+        my_pos = game_state.get_agent_position(self.index)
+        path_to_target = self.a_star_search(my_pos, target)
 
-        # You can profile your evaluation time by uncommenting these lines
-        # start = time.time()
-        values = [self.evaluate(game_state, a) for a in actions]
-        # print 'eval time for agent %d: %.4f' % (self.index, time.time() - start)
-        
-        max_value = max(values)
-        best_actions = [a for a, v in zip(actions, values) if v == max_value]
+        # Choose the next step on the path
+        if path_to_target:
+            next_step = path_to_target[0]
+            return self.get_action_from_position(my_pos, next_step)
+        else:
+            return random.choice(game_state.get_legal_actions(self.index))
 
-        food_left = len(self.get_food(game_state).as_list())
+    def get_action_from_position(self, current_position, next_position):
+        """Get the action to move from current_position to next_position."""
+        dx = next_position[0] - current_position[0]
+        dy = next_position[1] - current_position[1]
 
-        if food_left <= 2:
-            best_dist = 9999
-            best_action = None
-            for action in actions:
-                successor = self.get_successor(game_state, action)
-                pos2 = successor.get_agent_position(self.index)
-                dist = self.get_maze_distance(self.start, pos2)
-                if dist < best_dist:
-                    best_action = action
-                    best_dist = dist
-            return best_action
-
-        return random.choice(best_actions)
+        if dx == 1 and dy == 0:
+            return Directions.EAST
+        elif dx == -1 and dy == 0:
+            return Directions.WEST
+        elif dx == 0 and dy == 1:
+            return Directions.NORTH
+        elif dx == 0 and dy == -1:
+            return Directions.SOUTH
+        else:
+            return Directions.STOP
 
     def get_features(self, game_state, action):
         features = util.Counter()
