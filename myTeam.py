@@ -26,7 +26,7 @@ import numpy as np
 
 TRAINING = False
 def create_team(firstIndex, secondIndex, isRed,
-                first='ApproxQLearningOffense', second='DefensiveReflexAgent', **args):
+                first='ApproxQLearningOffense', second='DefensiveReflexCaptureAgent', **args):
     """
     This function should return a list of two agents that will form the
     team, initialized using firstIndex and secondIndex as their agent
@@ -469,29 +469,45 @@ class features_extractor:
                 frontier.append((nbr_x, nbr_y, dist + 1))
         return None
 
+####################################### DEFENSIVE AGENT #############################################
 
-
-##########
-# Agents #
-##########
-
-class ReflexCaptureAgent(CaptureAgent):
+class ReflexCaptureBaseAgent(CaptureAgent):
     """
-    A base class for reflex agents that chooses score-maximizing actions
+    This is the base class for a reflex capture agent in the Pacman game.
     """
 
     def register_initial_state(self, gameState):
+        """
+        Initializes the agent's state at the start of the game.
+
+        Args:
+            gameState (GameState): The initial game state.
+        """
+        # Initialize the starting position of the agent
         self.start = gameState.get_agent_position(self.index)
+
+        # Initial the state of the agent
         CaptureAgent.register_initial_state(self, gameState)
+
+        # Get the walls of the map
         self.walls = gameState.get_walls()
 
+        # Get the legal positions on the map
         self.legal_positions = gameState.get_walls().as_list(False)
+
+        # Initialize the belief distribution for each opponent
         self.obs = {enemy: util.Counter() for enemy in self.get_opponents(gameState)}
         for enemy in self.get_opponents(gameState):
             self.obs[enemy][gameState.get_initial_agent_position(enemy)] = 1.0
 
     def elapse_time(self, enemy, gameState):
+        """
+        Updates the belief distribution for the opponent's position over time.
 
+        Args:
+            enemy: The opponent for which the belief is updated.
+            gameState (GameState): The current game state.
+        """
         # Define a lambda function to calculate possible next positions
         possible_positions = lambda x, y: [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
 
@@ -527,7 +543,11 @@ class ReflexCaptureAgent(CaptureAgent):
 
     def observe(self, enemy, gameState):
         """
-        Updates beliefs based on the distance observation and Pacman's position.
+        Observes and updates the agent's belief about the opponent's position.
+
+        Args:
+            enemy: The opponent for which the belief is updated.
+            gameState (GameState): The current game state.
         """
         # Get distance observations for all agents
         all_noise = gameState.get_agent_distances()
@@ -570,20 +590,27 @@ class ReflexCaptureAgent(CaptureAgent):
 
     def choose_action(self, gameState):
         """
-        Picks among the actions with the highest Q(s,a).
+        Picks among the actions with the highest Q(s,a) for the agent.
+
+        Args:
+            gameState (GameState): The current game state.
+
+        Returns:
+            str: The chosen action.
         """
+        # Get the legal actions for the agent
         actions = gameState.get_legal_actions(self.index)
 
-        # You can profile your evaluation time by uncommenting these lines
         # start = time.time()
         values = [self.evaluate(gameState, a) for a in actions]
         # print 'eval time for agent %d: %.4f' % (self.index, time.time() - start)
 
+        # Select the best action based on the highest Q-value
         maxValue = max(values)
         bestActions = [a for a, v in zip(actions, values) if v == maxValue]
 
+        # If you ate enough food to win the best action is always returning home
         food_left = len(self.get_food(gameState).as_list())
-
         if food_left <= 2:
             best_dist = 9999
             for action in actions:
@@ -599,7 +626,14 @@ class ReflexCaptureAgent(CaptureAgent):
 
     def get_successor(self, gameState, action):
         """
-        Finds the next successor which is a grid position (location tuple).
+        Finds the next successor state after taking an action.
+
+        Args:
+            gameState (GameState): The current game state.
+            action (str): The action to be taken.
+
+        Returns:
+            GameState: The successor game state.
         """
         successor = gameState.generate_successor(self.index, action)
         pos = successor.get_agent_state(self.index).get_position()
@@ -611,7 +645,14 @@ class ReflexCaptureAgent(CaptureAgent):
 
     def evaluate(self, gameState, action):
         """
-        Computes a linear combination of features and feature weights
+        Computes a linear combination of features and feature weights.
+
+        Args:
+            gameState (GameState): The current game state.
+            action (str): The action to be evaluated.
+
+        Returns:
+            float: The evaluated value.
         """
         features = self.get_features(gameState, action)
         weights = self.getWeights(gameState, action)
@@ -619,7 +660,14 @@ class ReflexCaptureAgent(CaptureAgent):
 
     def get_features(self, gameState, action):
         """
-        Returns a counter of features for the state
+        Returns a counter of features for the state.
+
+        Args:
+            gameState (GameState): The current game state.
+            action (str): The action for which features are computed.
+
+        Returns:
+            util.Counter: A counter containing the features.
         """
         features = util.Counter()
         successor = self.get_successor(gameState, action)
@@ -628,42 +676,171 @@ class ReflexCaptureAgent(CaptureAgent):
 
     def getWeights(self, gameState, action):
         """
-        Normally, weights do not depend on the gamestate.  They can be either
-        a counter or a dictionary.
+        Returns a dictionary of feature weights for the given game state and action.
+
+        Args:
+            gameState (GameState): The current game state.
+            action (str): The action for which weights are provided.
+
+        Returns:
+            dict: A dictionary containing feature weights.
         """
         return {'successorScore': 1.0}
 
 
-class DefensiveReflexAgent(ReflexCaptureAgent):
+class DefensiveReflexCaptureAgent(ReflexCaptureBaseAgent):
     """
-    A reflex agent that keeps its side Pacman-free. Again,
-    this is to give you an idea of what a defensive agent
-    could be like.  It is not the best or only way to make
-    such an agent.
+    The DefensiveReflexCaptureAgent is responsible for defending the team's side of the map in the Pac-Man game.
+    It uses a combination of strategies to defend against enemy Pac-Man invaders.
+
+    More specifically:
+    1. Patrol Behavior: The agent patrols strategic points along the border of its territory, with a focus on chokepoints.
+       This ensures that it covers critical areas and intercepts invaders.
+
+    2. Belief Distribution: When no visible invaders are present, the agent uses a belief distribution to estimate
+       the potential locations of enemy Pac-Man agents. It adjusts its patrol behavior based on these estimations to
+       maintain effective defense. This Bayesian inference approach allows the agent to make probabilistic estimates
+       about where the enemy Pac-Man agents might be located. So its enables the agent to make informed decisions about
+       its defensive actions, even when it cannot directly see the enemy Pac-Man invaders.
+
+    3. Chokepoint Identification: The agent analyzes the map layout to identify chokepoints, which are key areas for
+       interception. It strategically positions itself near these chokepoints to increase its defensive capabilities.
+
+    4. Feature-Based Decision Making: The agent makes decisions based on a set of features computed from the game state.
+       These features include information about the presence of invaders, distances to invaders, and more.
+
+    5. Weighted Features: The agent assigns weights to these features to prioritize certain aspects of its decision-making.
+       For example, it may prioritize staying on defense, targeting nearby invaders, and avoiding stopping or reversing
+       whenever possible.
+
+    Overall, the DefensiveReflexCaptureAgent is designed to be a formidable defender, ensuring that the team's territory
+    remains secure by intercepting and repelling enemy Pac-Man invaders.
     """
 
+    def register_initial_state(self, gameState):
+        """
+        Initializes the agent's state and patrol points.
+
+        Args:
+            gameState (GameState): The current game state.
+        """
+        # Initialize the agent's state
+        super().register_initial_state(gameState)
+
+        # Get the patrol points for the agent
+        self.patrol_points = self.get_patrol_points(gameState)
+        self.current_patrol_point = 0  # Index of the current patrol point
+
+    def get_patrol_points(self, gameState):
+        """
+        This method calculates a list of patrol points that the agent should visit to effectively defend its side of the
+        map. It first determines the x-coordinate of the border, considering whether the agent is on the red or blue
+        team. It then adjusts this coordinate to ensure a safe distance from the border. Finally, it calls
+        'identify_chokepoints' to create a list of patrol points that focus on chokepoints, which are key areas where
+        enemy invaders are likely to pass through.
+
+        Args:
+            gameState (GameState): The current game state.
+
+        Returns:
+            list: List of patrol points.
+        """
+        # Calculate the x-coordinate for the patrol area
+        border_x = (gameState.get_walls().width // 2) - 1
+        if not self.red:
+            border_x += 1  # Adjust for blue team
+
+        # Adjust x-coordinate to stay within safe distance from the border
+        patrol_x = border_x - 1 if self.red else border_x + 1
+
+        # Create patrol points focusing on chokepoints
+        points = self.identify_chokepoints(gameState, patrol_x)
+        return points
+
+    def identify_chokepoints(self, gameState, patrol_x):
+        """
+        This method analyzes the layout of the game map to identify chokepoints that are strategically important for
+        patrolling. Chokepoints are locations where gaps exist in the walls along the border. Depending on whether
+        the agent is on the red or blue team, it searches for these gaps in the walls and records the positions of
+        chokepoints in the form of (x, y) coordinates. These chokepoints are critical for effective defensive patrol.
+
+        Args:
+            gameState (GameState): The current game state.
+            patrol_x (int): The x-coordinate of the patrol area.
+
+        Returns:
+            list: List of identified chokepoints.
+        """
+        # Initialize a list to store the identified chokepoints
+        points = []
+
+        # Get the height and width of the game map
+        wall_matrix = gameState.get_walls()
+        height = wall_matrix.height
+        width = wall_matrix.width
+
+        # Identify tiles that have gaps in the walls along the border
+        if self.red:
+            # If the agent is on the red team, search for gaps on the left side of the map
+            for y in range(1, height - 1):
+                if not wall_matrix[patrol_x][y]:
+                    if not wall_matrix[patrol_x + 1][y]:
+                        points.append((patrol_x, y))
+        else:
+            # If the agent is on the blue team, search for gaps on the right side of the map
+            for y in range(1, height - 1):
+                if not wall_matrix[patrol_x][y]:
+                    if not wall_matrix[patrol_x - 1][y]:
+                        points.append((patrol_x, y))
+
+        return points
+
     def choose_action(self, gameState):
+        """
+        Picks among the actions with the highest Q(s,a) for the agent.
+
+        Args:
+            gameState (GameState): The current game state.
+
+        Returns:
+            str: The chosen action.
+        """
+        # Get the legal actions the agent can take
         actions = gameState.get_legal_actions(self.index)
+
+        # Get information about enemy agents
         enemies = [gameState.get_agent_state(i) for i in self.get_opponents(gameState)]
+
+        # Identify visible invaders
         invaders = [a for a in enemies if a.is_pacman and a.get_position() != None]
 
         if len(invaders) == 0:
-            # Use belief distribution to determine patrol actions when no visible invaders
+            # When no visible invaders are present, use belief distribution for patrol actions
             return self.patrol_based_on_belief(gameState, actions)
         else:
-            # Existing logic for when invaders are detected
+            # Use existing logic for when invaders are detected
             return super().choose_action(gameState)
 
     def patrol_based_on_belief(self, gameState, actions):
         """
-        Adjust patrol behavior based on belief distribution of invader locations,
-        ensuring the agent stays on its side of the map.
+        Adjust patrol behavior based on belief distribution of invader locations,ensuring the agent stays on its side of
+        the map.
+
+        Args:
+            gameState (GameState): The current game state.
+            actions (list): List of legal actions the agent can take.
+
+        Returns:
+            str: The chosen action for patrolling.
         """
+        # Get the agent's current position
         myPos = gameState.get_agent_position(self.index)
+
+        # Initialize variables for tracking the best action and its distance
         best_action = None
         min_dist = float('inf')
 
-        # Border x-coordinate for dividing the map
+        # Determine the x-coordinate of the border that divides the map
         border_x = (gameState.get_walls().width // 2) - 1 if self.red else (gameState.get_walls().width // 2)
 
         # Identify the most probable invader location based on belief distribution
@@ -677,7 +854,7 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
                         highest_prob = prob
                         most_probable_invader_loc = pos
 
-        # If a probable invader location is identified on your side, move towards it
+        # If a probable invader location is identified on the agent's side, move towards it
         if most_probable_invader_loc:
             for action in actions:
                 successor = self.get_successor(gameState, action)
@@ -694,63 +871,30 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
 
         return best_action if best_action is not None else random.choice(actions)
 
-    def register_initial_state(self, gameState):
-        super().register_initial_state(gameState)
-        self.patrol_points = self.get_patrol_points(gameState)
-        self.current_patrol_point = 0  # Index of the current patrol point
-
-    def get_patrol_points(self, gameState):
-        """
-        Generate a list of strategic patrol points along the border, focusing on chokepoints.
-        """
-        # Calculate the x-coordinate for the patrol area
-        border_x = (gameState.get_walls().width // 2) - 1
-        if not self.red:
-            border_x += 1  # Adjust for blue team
-
-        # Adjust x-coordinate to stay within safe distance from the border
-        patrol_x = border_x - 1 if self.red else border_x + 1
-
-        # Create patrol points focusing on chokepoints
-        points = self.identify_chokepoints(gameState, patrol_x)
-        return points
-
-    def identify_chokepoints(self, gameState, patrol_x):
-        """
-        Analyze the map layout to find chokepoints for patrolling.
-        """
-        points = []
-        wall_matrix = gameState.get_walls()
-        height = wall_matrix.height
-        width = wall_matrix.width
-
-        # Identify tiles that have gaps in the walls along the border
-        if self.red:
-            for y in range(1, height - 1):
-                if not wall_matrix[patrol_x][y]:
-                    if not wall_matrix[patrol_x + 1][y]:
-                        points.append((patrol_x, y))
-        else:
-            for y in range(1, height - 1):
-                if not wall_matrix[patrol_x][y]:
-                    if not wall_matrix[patrol_x - 1][y]:
-                        points.append((patrol_x, y))
-
-        return points
-
     def patrol_border(self, gameState, actions):
         """
         Move towards the current patrol point, and update to the next point as needed.
+
+        Args:
+            gameState (GameState): The current game state.
+            actions (list): List of legal actions the agent can take.
+
+        Returns:
+            str: The chosen action for patrolling.
         """
+        # Get the agent's current position
         myPos = gameState.get_agent_position(self.index)
+
+        # Get the current patrol point
         patrol_point = self.patrol_points[self.current_patrol_point]
 
         # Check if reached the current patrol point
         if myPos == patrol_point:
+            # Update to the next patrol point in the list, looping back if necessary
             self.current_patrol_point = (self.current_patrol_point + 1) % len(self.patrol_points)
             patrol_point = self.patrol_points[self.current_patrol_point]
 
-        # Choose action to move towards the patrol point
+        # Choose an action to move towards the patrol point
         best_action = None
         min_dist = float('inf')
         for action in actions:
@@ -761,25 +905,42 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
                 best_action = action
                 min_dist = dist
 
+        # Return the chosen action for patrolling
         return best_action if best_action is not None else random.choice(actions)
 
     def get_features(self, gameState, action):
+        """
+        Compute and return a set of features that describe the game state after taking a given action.
+
+        Args:
+            gameState (GameState): The current game state.
+            action (str): The chosen action to take.
+
+        Returns:
+            util.Counter: A set of features as a Counter.
+        """
+        # Initialize an empty Counter to store the features
         features = util.Counter()
+
+        # Get the successor state after taking the specified action
         successor = self.get_successor(gameState, action)
 
+        # Get the agent's state in the successor state
         myState = successor.get_agent_state(self.index)
         myPos = myState.get_position()
 
-        # Computes whether we're on defense (1) or offense (0)
+        # Compute whether the agent is on defense (1) or offense (0)
         features['onDefense'] = 1
-        if myState.is_pacman: features['onDefense'] = 0
+        if myState.is_pacman:
+            features['onDefense'] = 0
 
-        # Computes distance to invaders we can see
+        # Compute the distance to visible invaders
         enemies = [successor.get_agent_state(i) for i in self.get_opponents(successor)]
         invaders = [a for a in enemies if a.is_pacman and a.get_position() != None]
 
         enemies_idx = [i for i in self.get_opponents(successor) if successor.get_agent_state(i).is_pacman]
-        # Bayes probability to see an enemy in further positions
+
+        # Calculate Bayesian probability to see an enemy in further positions
         if len(enemies_idx) > 0:
             if len(invaders) > 0:
                 dists = [self.get_maze_distance(myPos, a.get_position()) for a in invaders]
@@ -796,11 +957,32 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
                 features['invaderDistance'] = min(dists)
                 features['numInvaders'] = len(enemies_idx)
 
-        if action == Directions.STOP: features['stop'] = 1
+        # Check if the action is STOP and set the 'stop' feature
+        if action == Directions.STOP:
+            features['stop'] = 1
+
+        # Check if the action is a reverse action and set the 'reverse' feature
         rev = Directions.REVERSE[gameState.get_agent_state(self.index).configuration.direction]
-        if action == rev: features['reverse'] = 1
+        if action == rev:
+            features['reverse'] = 1
 
         return features
 
     def getWeights(self, gameState, action):
-        return {'numInvaders': -1000, 'onDefense': 100, 'invaderDistance': -10, 'stop': -100, 'reverse': -2}
+        """
+        Define and return a set of weights for the features to influence the agent's decision-making.
+
+        Args:
+            gameState (GameState): The current game state.
+            action (str): The chosen action to take.
+
+        Returns:
+            dict: A dictionary of feature weights.
+        """
+        return {
+            'numInvaders': -1000,  # Weight for the number of invaders (penalize more invaders)
+            'onDefense': 100,  # Weight for being on defense (favor being on defense)
+            'invaderDistance': -10,  # Weight for the distance to invaders (penalize longer distances)
+            'stop': -100,  # Weight for choosing the STOP action (strongly penalize STOP)
+            'reverse': -2  # Weight for choosing reverse actions (penalize reverse actions)
+        }
