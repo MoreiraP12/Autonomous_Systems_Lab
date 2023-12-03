@@ -25,9 +25,8 @@ import numpy as np
 #################
 
 TRAINING = False
-
 def create_team(firstIndex, secondIndex, isRed,
-                first='ApproxQLearningOffense', second='DefensiveReflexAgent', numTraining=0, **args):
+                first='ApproxQLearningOffense', second='DefensiveReflexAgent', **args):
     """
     This function should return a list of two agents that will form the
     team, initialized using firstIndex and secondIndex as their agent
@@ -49,24 +48,27 @@ def create_team(firstIndex, secondIndex, isRed,
 class ApproxQLearningOffense(CaptureAgent):
 
     def register_initial_state(self, gameState):
-        self.epsilon = 0.3
+        if TRAINING:
+            self.epsilon = 0.2
+        else: 
+            self.epsilon = 0
+        
         self.alpha = 0.2
-        self.discount = 0.85
-        self.episodesSoFar = 0
+        self.discount = 0.8
 
-        try:
-            with open('./trained_agent_weights.pkl', 'rb') as file:
-                print("Opened File")
-                self.weights = pickle.load(file)
-                print(self.weights)
+        # try:
+        #     with open('./trained_agent_weights.pkl', 'rb') as file:
+        #         self.weights = pickle.load(file)
+        #         print(self.weights)
           
-        except (FileNotFoundError, IOError):
-            print("Didn't find file")
-            self.weights = {'closest-food': -3.099192562140742,
+        # except (FileNotFoundError, IOError):
+        self.weights = {
+                            'closest-food': -3.099192562140742,
                             'bias': -9.280875042529367,
                             '#-of-ghosts-3-step-away': -3,
                             'eats-food': 15.127808437648863,
-                            'score': 20}
+                            'carrying_food_go_home': 300
+                            }
 
         self.start = gameState.get_agent_position(self.index)
         self.features_extractor = features_extractor(self)
@@ -78,7 +80,7 @@ class ApproxQLearningOffense(CaptureAgent):
         for enemy in self.get_opponents(gameState):
             self.obs[enemy][gameState.get_initial_agent_position(enemy)] = 1.0
 
-        self.total_food = len(self.get_food(gameState).as_list())
+        self.total_initial_food = len(self.get_food(gameState).as_list())
 
     def elapse_time(self, enemy, gameState):
 
@@ -158,69 +160,58 @@ class ApproxQLearningOffense(CaptureAgent):
         # If no valid observations, initialize the belief distribution
         # self.initialize(enemy, gameState)
 
-    def get_enemy_position_img(self, enemy):
-        # Get the belief distribution about the opponent's positions
-        belief_distribution = self.obs[enemy]  # Assuming 'enemy' is defined somewhere in your code
 
-        # Get the shape of the game board
-        board_shape = self.walls.width, self.walls.height
-
-        # Convert the belief distribution to a 2D numpy array
-        belief_array = np.zeros(board_shape)
-        for pos, prob in belief_distribution.items():
-            belief_array[pos[0]][pos[1]] = prob
-
-        return np.transpose(np.array(belief_array))
 
     def choose_action(self, gameState):
         """
             Picks among the actions with the highest Q(s,a).
         """
-        legalActions = gameState.get_legal_actions(self.index)
-        if len(legalActions) == 0:
+        legal_actions = gameState.get_legal_actions(self.index)
+        if len(legal_actions) == 0:
             return None
 
-        foodLeft = len(self.get_food(gameState).as_list())
-
-        if foodLeft <= 2:
-            bestDist = 9999
-            for action in legalActions:
-                successor = self.getSuccessor(gameState, action)
+        #If you ate enough food to win the best action is always returning home (no worries about enemies)
+        food_left = len(self.get_food(gameState).as_list())
+        if food_left <= 2:
+            best_dist = 10000
+            for action in legal_actions:
+                successor = self.get_successor(gameState, action)
                 pos2 = successor.get_agent_position(self.index)
                 dist = self.get_maze_distance(self.start, pos2)
-                if dist < bestDist:
+                if dist < best_dist:
                     bestAction = action
-                    bestDist = dist
+                    best_dist = dist
             return bestAction
-
+        
         action = None
         if TRAINING:
-            for action in legalActions:
+            for action in legal_actions:
                 self.updateWeights(gameState, action)
         if not util.flipCoin(self.epsilon):
             # exploit
-            action = self.getPolicy(gameState)
+            action = self.compute_action_from_q_values(gameState)
         else:
             # explore
-            action = random.choice(legalActions)
+            action = random.choice(legal_actions)
         return action
 
-    def getQValue(self, gameState, action):
-        """
-          Should return Q(state,action) = w * featureVector
-          where * is the dotProduct operator
-        """
+    def get_q_value(self, gameState, action):
         # features vector
-        features = self.features_extractor.getFeatures(gameState, action)
+        features = self.features_extractor.get_features(gameState, action)
+        print("======================")
+        print(self.weights)
+        print(features)
+        print(features * self.weights)
+
         return features * self.weights
 
     def update(self, gameState, action, nextState, reward):
         """
            Should update your weights based on transition
         """
-        features = self.features_extractor.getFeatures(gameState, action)
-        oldValue = self.getQValue(gameState, action)
-        futureQValue = self.getValue(nextState)
+        features = self.features_extractor.get_features(gameState, action)
+        oldValue = self.get_q_value(gameState, action)
+        futureQValue = self.get_value(nextState)
         difference = (reward + self.discount * futureQValue) - oldValue
         # for each feature i
         for feature in features:
@@ -231,21 +222,44 @@ class ApproxQLearningOffense(CaptureAgent):
         # print(self.weights)
 
     def updateWeights(self, gameState, action):
-        nextState = self.getSuccessor(gameState, action)
+        nextState = self.get_successor(gameState, action)
         reward = self.getReward(gameState, nextState)
         self.update(gameState, action, nextState, reward)
+    
+
+
 
     def getReward(self, gameState, nextState):
-        reward = 0
         agentPosition = gameState.get_agent_position(self.index)
+        midpoint_x = gameState.get_walls().width // 2
 
+        # Adjust border_x based on the team
+        if self.red:  # For the red team
+            border_x = midpoint_x - 1
+        else:  # For the blue team
+            border_x = midpoint_x
+
+        # Ensure border_x is within valid range
+        border_x = max(0, min(border_x, gameState.get_walls().width - 1))
+
+        # Calculate the center y-coordinate of the map
+        center_y = gameState.get_walls().height // 2
+
+        #go near home if you're carrying food
+        original_agent_state = gameState.get_agent_state(self.index)
+        go_home = (original_agent_state.num_carrying*3) * (10-self.get_maze_distance(agentPosition, (border_x, center_y)))
+
+            
+        score = 0
         if self.get_score(nextState) > self.get_score(gameState):
             diff = self.get_score(nextState) - self.get_score(gameState)
             if self.red:  # For the red team
-                reward = diff * 20
+                score += diff * 20
             else:  # For the blue team
-                reward = -diff * 20
+                score += -diff * 20
+        
 
+        distToFood_reward = 0
         # check if food eaten in nextState
         myFoods = self.get_food(gameState).as_list()
         distToFood = min([self.get_maze_distance(agentPosition, food) for food in myFoods])
@@ -253,8 +267,9 @@ class ApproxQLearningOffense(CaptureAgent):
         if distToFood == 1:
             nextFoods = self.get_food(nextState).as_list()
             if len(myFoods) - len(nextFoods) == 1:
-                reward = 20
+                distToFood_reward += 20
 
+        enemies_reward = 0
         # check if I am eaten
         enemies = [gameState.get_agent_state(i) for i in self.get_opponents(gameState)]
         ghosts = [a for a in enemies if not a.is_pacman and a.get_position() != None]
@@ -264,9 +279,13 @@ class ApproxQLearningOffense(CaptureAgent):
                 nextPos = nextState.get_agent_state(self.index).get_position()
                 if nextPos == self.start:
                     # I die in the next state
-                    reward = -50
+                    enemies_reward = -500
+        
+        # check if an enemy is close
+        #numGhostsInProximity = sum(self.isGhostWithinSteps((next_x, next_y), g, 3, walls) for g in ghosts)
 
-        return reward
+        print({"enemies":enemies_reward, "go_home": go_home, "distToFood_reward": distToFood_reward, "score": score})
+        return enemies_reward + go_home + distToFood_reward + score
 
     def final(self, state):
         "Called at the end of each game."
@@ -276,7 +295,7 @@ class ApproxQLearningOffense(CaptureAgent):
             pickle.dump(self.weights, file)
         # did we finish training?
 
-    def getSuccessor(self, gameState, action):
+    def get_successor(self, gameState, action):
         """
         Finds the next successor which is a grid position (location tuple).
         """
@@ -288,7 +307,7 @@ class ApproxQLearningOffense(CaptureAgent):
         else:
             return successor
 
-    def computeValueFromQValues(self, gameState):
+    def compute_value_from_q_values(self, gameState):
         """
           Returns max_action Q(state,action)
           where the max is over legal actions.  Note that if
@@ -298,34 +317,29 @@ class ApproxQLearningOffense(CaptureAgent):
         allowedActions = gameState.get_legal_actions(self.index)
         if len(allowedActions) == 0:
             return 0.0
-        bestAction = self.getPolicy(gameState)
-        return self.getQValue(gameState, bestAction)
+        bestAction = self.compute_action_from_q_values(gameState)
+        return self.get_q_value(gameState, bestAction)
 
-    def computeActionFromQValues(self, gameState):
-        """
-          Compute the best action to take in a state.  Note that if there
-          are no legal actions, which is the case at the terminal state,
-          you should return None.
-        """
-        legalActions = gameState.get_legal_actions(self.index)
-        if len(legalActions) == 0:
+    def compute_action_from_q_values(self, gameState):
+        
+        legal_actions = gameState.get_legal_actions(self.index)
+        if len(legal_actions) == 0:
             return None
+        
         actionVals = {}
         bestQValue = float('-inf')
-        for action in legalActions:
-            targetQValue = self.getQValue(gameState, action)
-            actionVals[action] = targetQValue
-            if targetQValue > bestQValue:
-                bestQValue = targetQValue
+        for action in legal_actions:
+            target_q_value = self.get_q_value(gameState, action)
+            actionVals[action] = target_q_value
+            if target_q_value > bestQValue:
+                bestQValue = target_q_value
         bestActions = [k for k, v in actionVals.items() if v == bestQValue]
         # random tie-breaking
         return random.choice(bestActions)
 
-    def getPolicy(self, gameState):
-        return self.computeActionFromQValues(gameState)
 
-    def getValue(self, gameState):
-        return self.computeValueFromQValues(gameState)
+    def get_value(self, gameState):
+        return self.compute_value_from_q_values(gameState)
 
 
 class features_extractor:
@@ -338,7 +352,7 @@ class features_extractor:
         distance = self.agentInstance.get_maze_distance(agentPos, ghostPos)
         return distance <= steps
 
-    def getFeatures(self, gameState, action):
+    def get_features(self, gameState, action):
         # extract the grid of food and wall locations and get the ghost locations
         food = self.agentInstance.get_food(gameState)
         walls = gameState.get_walls()
@@ -369,7 +383,8 @@ class features_extractor:
         dx, dy = Actions.direction_to_vector(action)
         next_x, next_y = int(x + dx), int(y + dy)
 
-        # count the number of ghosts 3-steps away
+        #TO DO: only worry about ghosts if scarred
+
         numGhostsInProximity = sum(self.isGhostWithinSteps((next_x, next_y), g, 3, walls) for g in ghosts)
         #numGhostsInProximity = sum((x, y) in Actions.get_legal_neighbors(g, walls) for g in ghosts)
         features["#-of-ghosts-3-step-away"] = numGhostsInProximity
@@ -378,37 +393,68 @@ class features_extractor:
         if not features["#-of-ghosts-3-step-away"] and food[next_x][next_y]:
             features["eats-food"] = 1.0
 
-        dist = self.closestFood((next_x, next_y), food, walls)
+        dist = self.closest_food((next_x, next_y), food, walls)
         if dist is not None:
             features["closest-food"] = float(dist) / (walls.width * walls.height)
 
 
-        features["score"] = self.agentInstance.get_score(gameState)
-        #print(features)
+        #carrying to much food should go home
+        agentPosition = gameState.get_agent_position(self.agentInstance.index)
+        midpoint_x = gameState.get_walls().width // 2
 
+        # Adjust border_x based on the team
+        if self.agentInstance.red:  # For the red team
+            border_x = midpoint_x - 1
+        else:  # For the blue team
+            border_x = midpoint_x
+
+        # Ensure border_x is within valid range
+        border_x = max(0, min(border_x, gameState.get_walls().width - 1))
+
+        # Calculate the center y-coordinate of the map
+        center_y = gameState.get_walls().height // 2
+
+        #go near home if you're carrying food
+        original_agent_state = gameState.get_agent_state(self.agentInstance.index)
+
+        desired_y = 0
+        best_dist = 999999
+        for i in range(1, gameState.get_walls().height-1):
+            if (border_x,i) in self.agentInstance.legal_positions:
+                dist = self.agentInstance.get_maze_distance(agentPosition, (border_x,i))
+                if dist < best_dist:
+                    desired_y = i
+
+        (x_agent,y_agent) = agentPosition
+        if x_agent > border_x-1:
+            base_distance = best_dist
+        else:
+            base_distance = 0
+        amount_of_food_carrying = original_agent_state.num_carrying
+        
+        features["carrying_food_go_home"] = (amount_of_food_carrying + 2*((100 -1 - base_distance)))/10
+        print(agentPosition)
+        print(base_distance)
+        print(amount_of_food_carrying)
         return features
 
-    def closestFood(self, pos, food, walls):
-        """
-        closestFood -- this is similar to the function that we have
-        worked on in the search project; here its all in one place
-        """
-        fringe = [(pos[0], pos[1], 0)]
+    def closest_food(self, pos, food, walls):
+        frontier = [(pos[0], pos[1], 0)]
         expanded = set()
-        while fringe:
-            pos_x, pos_y, dist = fringe.pop(0)
+        while frontier:
+            pos_x, pos_y, dist = frontier.pop(0)
             if (pos_x, pos_y) in expanded:
                 continue
             expanded.add((pos_x, pos_y))
-            # if we find a food at this location then exit
+      
             if food[pos_x][pos_y]:
                 return dist
-            # otherwise spread out from the location to its neighbours
+ 
             nbrs = Actions.get_legal_neighbors((pos_x, pos_y), walls)
             for nbr_x, nbr_y in nbrs:
-                fringe.append((nbr_x, nbr_y, dist + 1))
-        # no food found
+                frontier.append((nbr_x, nbr_y, dist + 1))
         return None
+
 
 
 ##########
@@ -522,22 +568,22 @@ class ReflexCaptureAgent(CaptureAgent):
         maxValue = max(values)
         bestActions = [a for a, v in zip(actions, values) if v == maxValue]
 
-        foodLeft = len(self.get_food(gameState).as_list())
+        food_left = len(self.get_food(gameState).as_list())
 
-        if foodLeft <= 2:
-            bestDist = 9999
+        if food_left <= 2:
+            best_dist = 9999
             for action in actions:
-                successor = self.getSuccessor(gameState, action)
+                successor = self.get_successor(gameState, action)
                 pos2 = successor.get_agent_position(self.index)
                 dist = self.get_maze_distance(self.start, pos2)
-                if dist < bestDist:
+                if dist < best_dist:
                     bestAction = action
-                    bestDist = dist
+                    best_dist = dist
             return bestAction
 
         return random.choice(bestActions)
 
-    def getSuccessor(self, gameState, action):
+    def get_successor(self, gameState, action):
         """
         Finds the next successor which is a grid position (location tuple).
         """
@@ -553,9 +599,25 @@ class ReflexCaptureAgent(CaptureAgent):
         """
         Computes a linear combination of features and feature weights
         """
-        features = self.getFeatures(gameState, action)
+        features = self.get_features(gameState, action)
         weights = self.getWeights(gameState, action)
         return features * weights
+
+    def get_features(self, gameState, action):
+        """
+        Returns a counter of features for the state
+        """
+        features = util.Counter()
+        successor = self.get_successor(gameState, action)
+        features['successorScore'] = self.get_score(successor)
+        return features
+
+    def getWeights(self, gameState, action):
+        """
+        Normally, weights do not depend on the gamestate.  They can be either
+        a counter or a dictionary.
+        """
+        return {'successorScore': 1.0}
 
 
 class DefensiveReflexAgent(ReflexCaptureAgent):
@@ -572,61 +634,124 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         invaders = [a for a in enemies if a.is_pacman and a.get_position() != None]
 
         if len(invaders) == 0:
-            # Patrol near the center of the border when there are no invaders
-            return self.patrol_border(gameState, actions)
+            # Use belief distribution to determine patrol actions when no visible invaders
+            return self.patrol_based_on_belief(gameState, actions)
         else:
             # Existing logic for when invaders are detected
             return super().choose_action(gameState)
 
-    def patrol_border(self, gameState, actions):
-        # Calculate the map's midpoint
-        midpoint_x = gameState.get_walls().width // 2
-
-        # Adjust border_x based on the team
-        if self.red:  # For the red team
-            border_x = midpoint_x - 1
-        else:  # For the blue team
-            border_x = midpoint_x
-
-        # Ensure border_x is within valid range
-        border_x = max(0, min(border_x, gameState.get_walls().width - 1))
-
-        # Calculate the center y-coordinate of the map
-        center_y = gameState.get_walls().height // 2
-
-        # Get the current position of the agent
+    def patrol_based_on_belief(self, gameState, actions):
+        """
+        Adjust patrol behavior based on belief distribution of invader locations,
+        ensuring the agent stays on its side of the map.
+        """
         myPos = gameState.get_agent_position(self.index)
+        best_action = None
+        min_dist = float('inf')
 
-        # Check if the agent is at the center border position
-        if myPos == (border_x, center_y):
-            # If at the center, move one step north if possible, else move south
-            if (border_x, center_y + 1) in actions and not gameState.has_wall(border_x, center_y + 1):
-                return Directions.NORTH
-            else:
-                return Directions.SOUTH
-        elif myPos == (border_x, center_y + 1):
-            # If one step north of center, move back to center
-            return Directions.SOUTH
-        elif myPos == (border_x, center_y - 1):
-            # If one step south of center, move back to center
-            return Directions.NORTH
-        else:
-            # If not near the center, move towards the center
-            best_action = None
-            min_dist = float('inf')
+        # Border x-coordinate for dividing the map
+        border_x = (gameState.get_walls().width // 2) - 1 if self.red else (gameState.get_walls().width // 2)
+
+        # Identify the most probable invader location based on belief distribution
+        most_probable_invader_loc = None
+        highest_prob = 0.0
+        for enemy in self.get_opponents(gameState):
+            for pos, prob in self.obs[enemy].items():
+                if prob > highest_prob and not gameState.has_wall(*pos):
+                    # Ensure the position is on your side of the map
+                    if (self.red and pos[0] <= border_x) or (not self.red and pos[0] >= border_x):
+                        highest_prob = prob
+                        most_probable_invader_loc = pos
+
+        # If a probable invader location is identified on your side, move towards it
+        if most_probable_invader_loc:
             for action in actions:
-                successor = self.getSuccessor(gameState, action)
+                successor = self.get_successor(gameState, action)
                 nextPos = successor.get_agent_state(self.index).get_position()
-                dist = self.get_maze_distance(nextPos, (border_x, center_y))
-                if dist < min_dist:
-                    best_action = action
-                    min_dist = dist
+                # Ensure the agent doesn't cross into the opposing side
+                if (self.red and nextPos[0] <= border_x) or (not self.red and nextPos[0] >= border_x):
+                    dist = self.get_maze_distance(nextPos, most_probable_invader_loc)
+                    if dist < min_dist:
+                        best_action = action
+                        min_dist = dist
+        else:
+            # Default to standard patrol behavior if no probable location is identified
+            return self.patrol_border(gameState, actions)
 
-            return best_action if best_action is not None else random.choice(actions)
+        return best_action if best_action is not None else random.choice(actions)
 
-    def getFeatures(self, gameState, action):
+    def register_initial_state(self, gameState):
+        super().register_initial_state(gameState)
+        self.patrol_points = self.get_patrol_points(gameState)
+        self.current_patrol_point = 0  # Index of the current patrol point
+
+    def get_patrol_points(self, gameState):
+        """
+        Generate a list of strategic patrol points along the border, focusing on chokepoints.
+        """
+        # Calculate the x-coordinate for the patrol area
+        border_x = (gameState.get_walls().width // 2) - 1
+        if not self.red:
+            border_x += 1  # Adjust for blue team
+
+        # Adjust x-coordinate to stay within safe distance from the border
+        patrol_x = border_x - 1 if self.red else border_x + 1
+
+        # Create patrol points focusing on chokepoints
+        points = self.identify_chokepoints(gameState, patrol_x)
+        return points
+
+    def identify_chokepoints(self, gameState, patrol_x):
+        """
+        Analyze the map layout to find chokepoints for patrolling.
+        """
+        points = []
+        wall_matrix = gameState.get_walls()
+        height = wall_matrix.height
+        width = wall_matrix.width
+
+        # Identify tiles that have gaps in the walls along the border
+        if self.red:
+            for y in range(1, height - 1):
+                if not wall_matrix[patrol_x][y]:
+                    if not wall_matrix[patrol_x + 1][y]:
+                        points.append((patrol_x, y))
+        else:
+            for y in range(1, height - 1):
+                if not wall_matrix[patrol_x][y]:
+                    if not wall_matrix[patrol_x - 1][y]:
+                        points.append((patrol_x, y))
+
+        return points
+
+    def patrol_border(self, gameState, actions):
+        """
+        Move towards the current patrol point, and update to the next point as needed.
+        """
+        myPos = gameState.get_agent_position(self.index)
+        patrol_point = self.patrol_points[self.current_patrol_point]
+
+        # Check if reached the current patrol point
+        if myPos == patrol_point:
+            self.current_patrol_point = (self.current_patrol_point + 1) % len(self.patrol_points)
+            patrol_point = self.patrol_points[self.current_patrol_point]
+
+        # Choose action to move towards the patrol point
+        best_action = None
+        min_dist = float('inf')
+        for action in actions:
+            successor = self.get_successor(gameState, action)
+            nextPos = successor.get_agent_state(self.index).get_position()
+            dist = self.get_maze_distance(nextPos, patrol_point)
+            if dist < min_dist:
+                best_action = action
+                min_dist = dist
+
+        return best_action if best_action is not None else random.choice(actions)
+
+    def get_features(self, gameState, action):
         features = util.Counter()
-        successor = self.getSuccessor(gameState, action)
+        successor = self.get_successor(gameState, action)
 
         myState = successor.get_agent_state(self.index)
         myPos = myState.get_position()
