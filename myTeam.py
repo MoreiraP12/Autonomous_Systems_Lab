@@ -49,7 +49,7 @@ class ApproxQLearningOffense(CaptureAgent):
 
     def register_initial_state(self, gameState):
         if TRAINING:
-            self.epsilon = 0.2
+            self.epsilon = 0.1
         else: 
             self.epsilon = 0
         
@@ -63,12 +63,12 @@ class ApproxQLearningOffense(CaptureAgent):
           
         # except (FileNotFoundError, IOError):
         self.weights = {
-                            'closest-food': -3.099192562140742,
-                            'bias': -9.280875042529367,
-                            '#-of-ghosts-3-step-away': -3,
-                            'eats-food': 15.127808437648863,
-                            'carrying_food_go_home': 300
-                            }
+                        'closest-food': -3.67136772,
+                        'bias': -9.2819232,
+                        '#-of-ghosts-3-step-away': -3.12376152,
+                        'eats-food': 15.81648863,
+                        #'carrying_food_go_home': 30
+                        }
 
         self.start = gameState.get_agent_position(self.index)
         self.features_extractor = features_extractor(self)
@@ -173,6 +173,20 @@ class ApproxQLearningOffense(CaptureAgent):
         #If you ate enough food to win the best action is always returning home (no worries about enemies)
         food_left = len(self.get_food(gameState).as_list())
         if food_left <= 2:
+            best_dist = 10000
+            for action in legal_actions:
+                successor = self.get_successor(gameState, action)
+                pos2 = successor.get_agent_position(self.index)
+                dist = self.get_maze_distance(self.start, pos2)
+                if dist < best_dist:
+                    bestAction = action
+                    best_dist = dist
+            return bestAction
+        
+        original_agent_state = gameState.get_agent_state(self.index)
+        food_carrying = original_agent_state.num_carrying 
+
+        if food_carrying > 3:
             best_dist = 10000
             for action in legal_actions:
                 successor = self.get_successor(gameState, action)
