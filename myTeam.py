@@ -46,24 +46,74 @@ def create_team(firstIndex, secondIndex, isRed,
 
 
 class OffensiveQLearningAgent(CaptureAgent):
+    """
+    The OffensiveQLearningAgent is a strategic agent designed for playing an offensive role in the Capture the Flag 
+    scenario of the Pac-Man game. It leverages Q-learning, a reinforcement learning technique, to make informed 
+    decisions and optimize its offensive gameplay. 
+    
+    Here are the key features and strategies employed by the OffensiveQLearningAgent:
+
+        1. Trained Weights Loading: The agent has the capability to load pre-trained weights from a file (trained_agent_weights.pkl). 
+        This feature allows the agent to benefit from past learning experiences, enhancing its decision-making.
+        
+        2. Q-learning Algorithm Parameters: During training, the agent dynamically adjusts its exploration-exploitation trade-off. 
+        The exploration rate (epsilon) is set to 0.15 for training, encouraging exploration, and 0 during gameplay, promoting exploitation 
+        of learned knowledge. The learning rate (alpha) is set to 0.2, determining the impact of new information on the agent's existing knowledge.
+        
+        3. Action Selection: The agent dynamically selects actions based on its current knowledge and game state. It favors 
+        returning home when carrying a significant amount of food or when close to victory conditions.
+        
+        4. Feature Extraction: Relevant features, such as proximity to ghosts, distance to nearby food, and the urgency to return home with food,
+        are extracted to inform the agent's decision-making process.
+        
+        5. Weighted Q-value Computation: Q-values, representing the expected cumulative rewards for specific actions, 
+        are calculated based on a weighted combination of features and learned weights. This forms the basis for the agent's decision-making.
+        
+        6. Weight Updating: The agent updates its knowledge by adjusting weights using the Q-learning update rule. This update considers 
+        observed rewards, discount factors, and predicted future rewards.
+        
+        7. Reward Calculation: Rewards are calculated based on various factors, including proximity to enemies, progress towards returning home, 
+        changes in the game score, and distance to the nearest food.
+        
+        8. Persistence and Learning: Trained weights are persisted to a file (trained_agent_weights.pkl) after each game, ensuring that the agent retains 
+        and builds upon its learned knowledge over multiple game sessions.
+        
+        9. Ghost Position Inference: The agent utilizes Bayesian inference to estimate the positions of opponents, particularly ghosts, 
+        based on observations and the passage of time.
+        
+    In summary, the OffensiveQLearningAgent demonstrates a strategic and adaptive approach to offensive gameplay, 
+    employing Q-learning principles to optimize its actions in the dynamic environment of Capture the Flag. 
+    The agent's continuous learning, feature-based decision-making, and integration with game-specific strategies 
+    contribute to its effectiveness as an offensive player.
+
+    """
     def load_weights(self):
         '''
-        load the trained weights 
+        Load the trained weights from a file, or provide default weights if the file is not found.
+
+        Returns:
+            dict: A dictionary containing the loaded or default weights.
         '''
+        # Initialize weights to None
         weights = None
+        
         try:
+            # Try to open the file and load weights from it
             with open('./trained_agent_weights.pkl', 'rb') as file:
                 weights = pickle.load(file)
-          
+            
         except (FileNotFoundError, IOError):
-                weights = {
-                        'bias':  -10.23232322332,
-                        'food_close': -2.983928392083,
-                        'ghosts_close"': -34.9843372922,
-                        'food_eaten': 12.12232122121,
-                        'carrying_food_go_home': 1.02389123231
-                        }
+            # If the file is not found or an error occurs, provide default weights
+            weights = {
+                'bias': -10.23232322332,
+                'food_close': -2.983928392083,
+                'ghosts_close': -34.9843372922,
+                'food_eaten': 12.12232122121,
+                'carrying_food_go_home': 1.02389123231
+            }
+        
         return weights
+
     
     def register_initial_state(self, game_state):
         #Important variables related to the Q learning algorithm
@@ -85,63 +135,119 @@ class OffensiveQLearningAgent(CaptureAgent):
         self.obs = {enemy: util.Counter() for enemy in self.get_opponents(game_state)}
         for enemy in self.get_opponents(game_state):
             self.obs[enemy][game_state.get_initial_agent_position(enemy)] = 1.0
+    
     def run_home_action(self, game_state):
+        """
+        Choose the action that brings the agent closer to its initial position.
+
+        Args:
+            game_state (GameState): The current game state.
+
+        Returns:
+            str: The chosen action.
+        """
+        # Initialize the best distance to a large value
         best_dist = 10000
-        for action in self.legal_actions:
+
+        for action in game_state.get_legal_actions(self.index):
+            # Get the successor state after taking the current action
             successor = self.get_successor(game_state, action)
+
+            # Get the agent's position in the successor state
             pos2 = successor.get_agent_position(self.index)
+
+            # Calculate the distance from the initial position to the new position
             dist = self.get_maze_distance(self.initial_position, pos2)
+
+            # Update the best action if the new distance is smaller
             if dist < best_dist:
                 bestAction = action
                 best_dist = dist
+
+        # Return the best action that brings the agent closer to its initial position
         return bestAction
+
     
     def choose_action(self, game_state):
         """
-            Picks among the actions with the highest Q(s,a).
+        Choose an action based on the Q-values and exploration-exploitation strategy.
+
+        Args:
+            game_state (GameState): The current game state.
+
+        Returns:
+            str: The chosen action.
         """
         action = None
         legal_actions = game_state.get_legal_actions(self.index)
+
+        # Return None if no legal actions are available
         if len(legal_actions) == 0:
             return None
 
-        #If you ate enough food to win the best action is always returning home (no worries about enemies)
+        # If the agent has collected enough food to win, always return home
         food_left = len(self.get_food(game_state).as_list())
-        
         if food_left <= 2:
             return self.run_home_action(game_state)
-        
+
+        # If the agent is carrying a significant amount of food, prioritize returning home
         original_agent_state = game_state.get_agent_state(self.index)
-        if original_agent_state.num_carrying  > 3:
+        if original_agent_state.num_carrying > 3:
             return self.run_home_action(game_state)
-        
+
+        # If in training mode, update weights based on the current state and actions
         if TRAINING:
             for action in legal_actions:
                 self.update_weights(game_state, action)
+
+        # Determine whether to exploit or explore based on the epsilon value
         if not util.flipCoin(self.epsilon):
-            # exploit
+            # Exploit: Choose the action with the highest Q-value
             action = self.compute_action_from_q_values(game_state)
         else:
-            # explore
+            # Explore: Randomly choose an action
             action = random.choice(legal_actions)
+
         return action
 
-
     def is_ghost_within_steps(self, agentPos, ghostPos, steps, walls):
-        # This function checks if a ghost is within 'steps' distance from the agent
+        """
+        Check if a ghost is within a specified number of steps from the agent.
+
+        Args:
+            agentPos (tuple): The current position of the agent.
+            ghostPos (tuple): The position of the ghost.
+            steps (int): The maximum number of steps allowed.
+            walls (Grid): The grid representing the walls.
+
+        Returns:
+            bool: True if the ghost is within the specified number of steps, False otherwise.
+        """
+        # Calculate the distance between the agent and the ghost
         distance = self.get_maze_distance(agentPos, ghostPos)
+
+        # Check if the distance is within the specified number of steps
         return distance <= steps
-    
+
     def get_num_of_ghost_in_proximity(self, game_state, action):
-        # extract the grid of food and wall locations and get the ghost locations
+        """
+        Get the number of ghosts in proximity after taking a specific action.
+
+        Args:
+            game_state (GameState): The current game state.
+            action (str): The chosen action to take.
+
+        Returns:
+            int: The number of ghosts in proximity.
+        """
+        # Extract the grid of food and wall locations and get the ghost locations
         food = self.get_food(game_state)
         walls = game_state.get_walls()
         enemies = [game_state.get_agent_state(i) for i in self.get_opponents(game_state)]
         enemies_idx = [i for i in self.get_opponents(game_state)]
-        ghosts = [a.get_position() for a in enemies if not a.is_pacman and a.get_position() != None]
+        ghosts = [a.get_position() for a in enemies if not a.is_pacman and a.get_position() is not None]
 
-        # Here is where the probability of seeing a ghost in blind locations comes into play
-        # The agent will always aproximate the ghost location, he will never going to be blind
+        # Update ghost positions using Bayesian inference if no ghosts are currently visible
         max_vals = list()
         if len(ghosts) == 0:
             for e_idx in enemies_idx:
@@ -152,14 +258,28 @@ class OffensiveQLearningAgent(CaptureAgent):
                 max_vals.append(max_position)
             ghosts = list(set(max_vals))
 
+        # Get the agent's position after taking the specified action
         agentPosition = game_state.get_agent_position(self.index)
         x, y = agentPosition
         dx, dy = Actions.direction_to_vector(action)
         next_x, next_y = int(x + dx), int(y + dy)
 
+        # Count the number of ghosts within 3 steps from the new position
         return sum(self.is_ghost_within_steps((next_x, next_y), g, 3, walls) for g in ghosts)
+
     
     def calculate_carrying_food_go_home_feature(self, game_state, agent_position):
+        """
+        Calculate a feature indicating the desirability of going near home when carrying food.
+
+        Args:
+            game_state (GameState): The current game state.
+            agent_position (tuple): The current position of the agent.
+
+        Returns:
+            float: The calculated feature value.
+        """
+        # Calculate the midpoint of the map's width
         midpoint_x = game_state.get_walls().width // 2
 
         # Adjust border_x based on the team
@@ -169,49 +289,84 @@ class OffensiveQLearningAgent(CaptureAgent):
         # Calculate the center y-coordinate of the map
         center_y = game_state.get_walls().height // 2
 
-        # Go near home if carrying food
+        # Get the agent's state in the current game state
         original_agent_state = game_state.get_agent_state(self.index)
 
+        # Find the desired y-coordinate and the best distance to it
         desired_y, best_dist = self.find_desired_y(game_state, agent_position, border_x)
         x_agent, _ = agent_position
         base_distance = best_dist if x_agent > border_x - 1 else 0
 
+        # Get the amount of food the agent is currently carrying
         amount_of_food_carrying = original_agent_state.num_carrying
-        carrying_food_go_home_feature = (amount_of_food_carrying + 2 * ((100 - 1 - base_distance))) / 10
 
-        print(base_distance)
-        print(amount_of_food_carrying)
+        # Calculate the carrying_food_go_home feature based on the formula
+        carrying_food_go_home_feature = (amount_of_food_carrying + 2 * ((100 - 1 - base_distance))) / 10
 
         return carrying_food_go_home_feature
 
     def find_desired_y(self, game_state, agent_position, border_x):
+        """
+        Find the desired y-coordinate for going near home when carrying food.
+
+        Args:
+            game_state (GameState): The current game state.
+            agent_position (tuple): The current position of the agent.
+            border_x (int): The x-coordinate of the border.
+
+        Returns:
+            tuple: A tuple containing the desired y-coordinate and the best distance.
+        """
         desired_y = 0
         best_dist = 999999
+
+        # Iterate over possible y-coordinates within the map's height
         for i in range(1, game_state.get_walls().height - 1):
             if (border_x, i) in self.legal_positions:
+                # Calculate the distance to the current y-coordinate
                 dist = self.get_maze_distance(agent_position, (border_x, i))
+
+                # Update the desired y-coordinate and best distance if the current distance is smaller
                 if dist < best_dist:
                     desired_y = i
+                    best_dist = dist
+
         return desired_y, best_dist
-    
+
     def get_features(self, game_state, action):
+        """
+        Compute and return a set of features that describe the game state after taking a given action.
+
+        Args:
+            game_state (GameState): The current game state.
+            action (str): The chosen action to take.
+
+        Returns:
+            util.Counter: A set of features as a Counter.
+        """
+        # Initialize an empty Counter to store the features
         features = util.Counter()
 
-        # compute the location of pacman after he takes the action
+        # Compute the location of the agent after taking the action
         agent_position = game_state.get_agent_position(self.index)
         x, y = agent_position
         dx, dy = Actions.direction_to_vector(action)
         next_x, next_y = int(x + dx), int(y + dy)
-        
+
+        # Set a bias feature with a constant value
         features["bias"] = 1.0
-        features["ghosts_close"] =  self.get_num_of_ghost_in_proximity(game_state, action)
+
+        # Get the number of ghosts in proximity and set a feature accordingly
+        features["ghosts_close"] = self.get_num_of_ghost_in_proximity(game_state, action)
         if features["ghosts_close"] == 0:
             features["food_eaten"] = 1.0
 
-        dist = self.closest_food((next_x, next_y),  self.get_food(game_state), game_state.get_walls())
+        # Calculate the distance to the closest food and set a feature accordingly
+        dist = self.closest_food((next_x, next_y), self.get_food(game_state), game_state.get_walls())
         if dist is not None:
             features["food_close"] = float(dist) / (game_state.get_walls().width * game_state.get_walls().height)
 
+        # Calculate the carrying_food_go_home feature and set the corresponding feature
         features["carrying_food_go_home"] = self.calculate_carrying_food_go_home_feature(game_state, agent_position)
 
         return features
@@ -315,17 +470,9 @@ class OffensiveQLearningAgent(CaptureAgent):
 
             # Update the agent's belief about the opponent's positions
             self.obs[enemy] = all_obs
-        # else:
-        # If no valid observations, initialize the belief distribution
-        # self.initialize(enemy, game_state)
 
     def get_q_value(self, game_state, action):
-        # features vector
         features = self.get_features(game_state, action)
-        print(features)
-        print(self.weights)
-        print(features * self.weights)
-
         return features * self.weights
 
     def update(self, game_state, action, nextState, reward):
@@ -345,62 +492,165 @@ class OffensiveQLearningAgent(CaptureAgent):
         # print(self.weights)
 
     def update_weights(self, game_state, action):
+        """
+        Update the weights based on the reward received after taking a specific action.
+
+        Args:
+            game_state (GameState): The current game state.
+            action (str): The chosen action to update weights.
+        """
+        # Get the successor state after taking the specified action
         nextState = self.get_successor(game_state, action)
+
+        # Get the reward for the transition from the current state to the successor state
         reward = self.get_reward(game_state, nextState)
+
+        # Update the weights based on the current and successor states, the chosen action, and the reward
         self.update(game_state, action, nextState, reward)
-    
 
     def get_reward(self, game_state, nextState):
+        """
+        Calculate and return the total reward for a given state transition.
+
+        Args:
+            game_state (GameState): The current game state.
+            nextState (GameState): The successor state after taking an action.
+
+        Returns:
+            float: The total reward for the state transition.
+        """
+        # Get the agent's position in the current game state
         agent_position = game_state.get_agent_position(self.index)
+
+        # Calculate rewards for different aspects and sum them up
         go_home_reward = self.calculate_go_home_reward(game_state, agent_position)
         score_reward = self.calculate_score_reward(game_state, nextState)
         dist_to_food_reward = self.calculate_dist_to_food_reward(game_state, nextState, agent_position)
         enemies_reward = self.calculate_enemies_reward(game_state, nextState, agent_position)
 
+        # Display individual rewards for debugging purposes
         rewards = {"enemies": enemies_reward, "go_home": go_home_reward, "dist_to_food_reward": dist_to_food_reward, "score": score_reward}
         print(rewards)
+
+        # Return the sum of all rewards
         return sum(rewards.values())
 
     def calculate_go_home_reward(self, game_state, agent_position):
+        """
+        Calculate the reward for going near home based on the amount of food carried and the distance to home.
+
+        Args:
+            game_state (GameState): The current game state.
+            agent_position (tuple): The current position of the agent.
+
+        Returns:
+            float: The calculated reward for going near home.
+        """
+        # Calculate the midpoint of the map's width
         midpoint_x = game_state.get_walls().width // 2
+
+        # Adjust border_x based on the team
         border_x = midpoint_x - 1 if self.red else midpoint_x
         border_x = max(0, min(border_x, game_state.get_walls().width - 1))
+
+        # Calculate the center y-coordinate of the map
         center_y = game_state.get_walls().height // 2
+
+        # Get the agent's state in the current game state
         original_agent_state = game_state.get_agent_state(self.index)
+
+        # Calculate and return the go_home reward based on the formula
         return (original_agent_state.num_carrying * 3) * (10 - self.get_maze_distance(agent_position, (border_x, center_y)))
 
     def calculate_score_reward(self, game_state, nextState):
+        """
+        Calculate the reward based on the change in score from the current state to the successor state.
+
+        Args:
+            game_state (GameState): The current game state.
+            nextState (GameState): The successor state after taking an action.
+
+        Returns:
+            float: The calculated reward for the change in score.
+        """
         score_reward = 0
+
+        # Check if the score has increased
         if self.get_score(nextState) > self.get_score(game_state):
+            # Calculate the difference in score
             diff = self.get_score(nextState) - self.get_score(game_state)
+
+            # Update the score reward based on the team color
             score_reward += diff * 20 if self.red else -diff * 20
+
         return score_reward
 
     def calculate_dist_to_food_reward(self, game_state, nextState, agent_position):
+        """
+        Calculate the reward based on the change in distance to the nearest food.
+
+        Args:
+            game_state (GameState): The current game state.
+            nextState (GameState): The successor state after taking an action.
+            agent_position (tuple): The current position of the agent.
+
+        Returns:
+            float: The calculated reward for the change in distance to food.
+        """
         dist_to_food_reward = 0
+
+        # Get the list of coordinates of the agent's food in the current state
         my_foods = self.get_food(game_state).as_list()
+
+        # Get the minimum distance to food in the current state
         dist_to_food = min([self.get_maze_distance(agent_position, food) for food in my_foods])
 
+        # Check if the agent reached a food in the next state
         if dist_to_food == 1:
+            # Get the list of coordinates of the agent's food in the next state
             next_foods = self.get_food(nextState).as_list()
+
+            # Check if one food was eaten in the next state
             if len(my_foods) - len(next_foods) == 1:
+                # Update the dist_to_food_reward
                 dist_to_food_reward += 20
 
         return dist_to_food_reward
 
     def calculate_enemies_reward(self, game_state, nextState, agent_position):
+        """
+        Calculate the reward based on the proximity to enemies (ghosts) in the current and next states.
+
+        Args:
+            game_state (GameState): The current game state.
+            nextState (GameState): The successor state after taking an action.
+            agent_position (tuple): The current position of the agent.
+
+        Returns:
+            float: The calculated reward for the proximity to enemies.
+        """
         enemies_reward = 0
+
+        # Get the states of enemies in the current state
         enemies = [game_state.get_agent_state(i) for i in self.get_opponents(game_state)]
+
+        # Get the positions of ghosts among enemies
         ghosts = [a for a in enemies if not a.is_pacman and a.get_position() is not None]
 
+        # Check if there are ghosts in the current state
         if len(ghosts) > 0:
+            # Get the minimum distance to a ghost in the current state
             min_dist_ghost = min([self.get_maze_distance(agent_position, g.get_position()) for g in ghosts])
+
+            # Check if the agent is one step away from a ghost in the next state and going home
             if min_dist_ghost == 1:
                 next_pos = nextState.get_agent_state(self.index).get_position()
                 if next_pos == self.initial_position:
+                    # Update the enemies_reward
                     enemies_reward = -500
 
         return enemies_reward
+
    
     def get_successor(self, game_state, action):
         """
