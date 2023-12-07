@@ -1,4 +1,4 @@
-# myTeam.py
+# # myTeam.py
 # ---------
 # Licensing Information:  You are free to use or extend these projects for
 # educational purposes provided that (1) you do not distribute or publish
@@ -228,7 +228,46 @@ class OffensiveQLearningAgent(CaptureAgent):
 
         # Check if the distance is within the specified number of steps
         return distance <= steps
+    
+    def is_red_team(self, game_state):
+        """
+        Check if the agent is on the red team.
 
+        Args:
+            game_state (GameState): The current game state.
+
+        Returns:
+            bool: True if the agent is on the red team, False otherwise.
+        """
+        return self.index in game_state.red_team
+    
+    def get_zone_map(self, game_state, is_red_team):
+        """
+        Create a binary 2D array representing the safe zone and danger zone.
+
+        Args:
+            game_state (GameState): The current game state.
+            is_red_team (bool): True if your team is the red team, False if blue.
+
+        Returns:
+            List[List[int]]: A 2D array with 0's indicating your safe zone and 1's indicating the enemy's zone.
+        """
+        walls = game_state.get_walls()
+        width, height = walls.width, walls.height
+        mid_x = width // 2
+
+        # Create a 2D array initialized to 0
+        zone_map = [[0 for _ in range(height)] for _ in range(width)]
+
+        # Fill the enemy's half with 1's
+        start_x = mid_x if is_red_team else 0
+        end_x = width if is_red_team else mid_x
+        for x in range(start_x, end_x):
+            for y in range(height):
+                if not walls[x][y]:  # Only mark non-wall positions
+                    zone_map[x][y] = 1
+
+        return zone_map
     def get_num_of_ghost_in_proximity(self, game_state, action):
         """
         Get the number of ghosts in proximity after taking a specific action.
@@ -248,14 +287,31 @@ class OffensiveQLearningAgent(CaptureAgent):
         ghosts = [a.get_position() for a in enemies if not a.is_pacman and a.get_position() is not None]
 
         # Update ghost positions using Bayesian inference if no ghosts are currently visible
+        red_team_bool = self.is_red_team(game_state)
+        zone_map = self.get_zone_map(game_state, red_team_bool)
         max_vals = list()
         if len(ghosts) == 0:
             for e_idx in enemies_idx:
                 self.observe(e_idx, game_state)
                 self.elapse_time(e_idx, game_state)
                 belief_dist_e = self.obs[e_idx]
-                max_position, max_prob = max(belief_dist_e.items(), key=lambda item: item[1])
-                max_vals.append(max_position)
+                #Previous approach
+                #max_position, max_prob = max(belief_dist_e.items(), key=lambda item: item[1])
+                #max_vals.append(max_position)
+                #New approach: get top 4 danger zones in the map and set them as "danger zones" possibly ghosts
+                # Filter and sort items with values greater than 0
+                filtered_sorted_items = sorted(
+                    [(position, prob) for position, prob in belief_dist_e.items() if prob > 0],
+                    key=lambda item: item[1], 
+                    reverse=True
+                )
+                # Get the top 4 or fewer items
+                top_items = filtered_sorted_items[:min(4, len(filtered_sorted_items))]
+                for item in top_items:
+                    (col,row) = item[0]
+                    #only append enemies when they are in the danger zone
+                    if zone_map[col][row]==1:
+                        max_vals.append(item[0])  # Append each item in top_items to max_vals'''
             ghosts = list(set(max_vals))
 
         # Get the agent's position after taking the specified action
@@ -264,9 +320,8 @@ class OffensiveQLearningAgent(CaptureAgent):
         dx, dy = Actions.direction_to_vector(action)
         next_x, next_y = int(x + dx), int(y + dy)
 
-        # Count the number of ghosts within 3 steps from the new position
-        return sum(self.is_ghost_within_steps((next_x, next_y), g, 3, walls) for g in ghosts)
-
+        # Count the number of ghosts within 5 steps from the new position
+        return sum(self.is_ghost_within_steps((next_x, next_y), g, 5, walls) for g in ghosts)
     
     def calculate_carrying_food_go_home_feature(self, game_state, agent_position):
         """
@@ -360,6 +415,8 @@ class OffensiveQLearningAgent(CaptureAgent):
         features["ghosts_close"] = self.get_num_of_ghost_in_proximity(game_state, action)
         if features["ghosts_close"] == 0:
             features["food_eaten"] = 1.0
+        else:
+            features["food_eaten"] = 0
 
         # Calculate the distance to the closest food and set a feature accordingly
         dist = self.closest_food((next_x, next_y), self.get_food(game_state), game_state.get_walls())
@@ -531,9 +588,9 @@ class OffensiveQLearningAgent(CaptureAgent):
         # Display individual rewards for debugging purposes
         rewards = {"enemies": enemies_reward, "go_home": go_home_reward, "dist_to_food_reward": dist_to_food_reward, "score": score_reward}
         print(rewards)
-
+        total_reward = sum(rewards.values())
         # Return the sum of all rewards
-        return sum(rewards.values())
+        return total_reward
 
     def calculate_go_home_reward(self, game_state, agent_position):
         """
@@ -633,10 +690,31 @@ class OffensiveQLearningAgent(CaptureAgent):
 
         # Get the states of enemies in the current state
         enemies = [game_state.get_agent_state(i) for i in self.get_opponents(game_state)]
-
+        enemies_idx = [i for i in self.get_opponents(game_state)]
         # Get the positions of ghosts among enemies
         ghosts = [a for a in enemies if not a.is_pacman and a.get_position() is not None]
-
+        # Update ghost positions using Bayesian inference if no ghosts are currently visible
+        red_team_bool = self.is_red_team(game_state)
+        zone_map = self.get_zone_map(game_state, red_team_bool)
+        max_vals = list()
+        if len(ghosts) == 0:
+            for e_idx in enemies_idx:
+                self.observe(e_idx, game_state)
+                self.elapse_time(e_idx, game_state)
+                belief_dist_e = self.obs[e_idx]
+                filtered_sorted_items = sorted(
+                    [(position, prob) for position, prob in belief_dist_e.items() if prob > 0],
+                    key=lambda item: item[1], 
+                    reverse=True
+                )
+                # Get the top 4 or fewer items
+                top_items = filtered_sorted_items[:min(4, len(filtered_sorted_items))]
+                for item in top_items:
+                    (col,row) = item[0]
+                    #only append enemies when they are in the danger zone
+                    if zone_map[col][row]==1:
+                        max_vals.append(item[0])  # Append each item in top_items to max_vals'''
+            ghosts = list(set(max_vals))
         # Check if there are ghosts in the current state
         if len(ghosts) > 0:
             # Get the minimum distance to a ghost in the current state
