@@ -25,6 +25,8 @@ import numpy as np
 #################
 
 TRAINING = False
+
+
 def create_team(firstIndex, secondIndex, isRed,
                 first='OffensiveQLearningAgent', second='DefensiveReflexCaptureAgent', **args):
     """
@@ -87,6 +89,7 @@ class OffensiveQLearningAgent(CaptureAgent):
     contribute to its effectiveness as an offensive player.
 
     """
+
     def load_weights(self):
         '''
         Load the trained weights from a file, or provide default weights if the file is not found.
@@ -96,46 +99,45 @@ class OffensiveQLearningAgent(CaptureAgent):
         '''
         # Initialize weights to None
         weights = None
-        
+
         # try:
         #     # Try to open the file and load weights from it
         #     with open('./trained_agent_weights.pkl', 'rb') as file:
         #         weights = pickle.load(file)
-            
+
         # except (FileNotFoundError, IOError):
-            # If the file is not found or an error occurs, provide default weights
+        # If the file is not found or an error occurs, provide default weights
         weights = {
-                    'bias':-9.1234412,
-                    'food_close': -2.983928392083,
-                    'ghosts_close': -3.65065432233,
-                    'food_eaten': 15.12232122121,
-                    'carrying_food_go_home': 1.822389123231
-                }
-        
+            'bias': -9.1234412,
+            'food_close': -2.983928392083,
+            'ghosts_close': -3.65065432233,
+            'food_eaten': 15.12232122121,
+            'carrying_food_go_home': 1.822389123231
+        }
+
         return weights
 
-    
     def register_initial_state(self, game_state):
-        #Important variables related to the Q learning algorithm
-        #When playing we don't want any exploration, strictly on policy
-        if TRAINING: self.epsilon = 0.15
-        else: 
+        # Important variables related to the Q learning algorithm
+        # When playing we don't want any exploration, strictly on policy
+        if TRAINING:
+            self.epsilon = 0.15
+        else:
             self.epsilon = 0
         self.alpha = 0.2
         self.discount = 0.8
         self.weights = self.load_weights()
 
-        
         self.initial_position = game_state.get_agent_position(self.index)
         self.legal_positions = game_state.get_walls().as_list(False)
 
         CaptureAgent.register_initial_state(self, game_state)
 
-        #Initialize the Bayesian Inference for the ghost positions
+        # Initialize the Bayesian Inference for the ghost positions
         self.obs = {enemy: util.Counter() for enemy in self.get_opponents(game_state)}
         for enemy in self.get_opponents(game_state):
             self.obs[enemy][game_state.get_initial_agent_position(enemy)] = 1.0
-    
+
     def run_home_action(self, game_state):
         """
         Choose the action that brings the agent closer to its initial position.
@@ -167,7 +169,6 @@ class OffensiveQLearningAgent(CaptureAgent):
         # Return the best action that brings the agent closer to its initial position
         return bestAction
 
-    
     def choose_action(self, game_state):
         """
         Choose an action based on the Q-values and exploration-exploitation strategy.
@@ -267,7 +268,6 @@ class OffensiveQLearningAgent(CaptureAgent):
         # Count the number of ghosts within 3 steps from the new position
         return sum(self.is_ghost_within_steps((next_x, next_y), g, 3, walls) for g in ghosts)
 
-    
     def calculate_carrying_food_go_home_feature(self, game_state, agent_position, action):
         """
         Calculate a feature indicating the desirability of going near home when carrying food.
@@ -288,7 +288,9 @@ class OffensiveQLearningAgent(CaptureAgent):
         # print("Food carrying: ", amount_of_food_carrying )
         # print("Distance home: ", ((game_state.get_walls().width / 3) -  self.get_maze_distance(self.initial_position, agent_position)))
 
-        return amount_of_food_carrying / -((game_state.get_walls().width / 3) -  self.get_maze_distance(self.initial_position, (next_x, next_y)))
+        return amount_of_food_carrying / -(
+                    (game_state.get_walls().width / 3) - self.get_maze_distance(self.initial_position,
+                                                                                (next_x, next_y)))
 
     def get_features(self, game_state, action):
         """
@@ -316,7 +318,7 @@ class OffensiveQLearningAgent(CaptureAgent):
         features["score"] = 1.0
         # Get the number of ghosts in proximity and set a feature accordingly
         features["ghosts_close"] = self.get_num_of_ghost_in_proximity(game_state, action)
-        
+
         features["food_eaten"] = 1.0
 
         # Calculate the distance to the closest food and set a feature accordingly
@@ -325,7 +327,8 @@ class OffensiveQLearningAgent(CaptureAgent):
             features["food_close"] = float(dist) / (game_state.get_walls().width * game_state.get_walls().height)
 
         # Calculate the carrying_food_go_home feature and set the corresponding feature
-        features["carrying_food_go_home"] = self.calculate_carrying_food_go_home_feature(game_state, agent_position, action)
+        features["carrying_food_go_home"] = self.calculate_carrying_food_go_home_feature(game_state, agent_position,
+                                                                                         action)
 
         return features
 
@@ -337,10 +340,10 @@ class OffensiveQLearningAgent(CaptureAgent):
             if (pos_x, pos_y) in expanded:
                 continue
             expanded.add((pos_x, pos_y))
-      
+
             if food[pos_x][pos_y]:
                 return dist
- 
+
             nbrs = Actions.get_legal_neighbors((pos_x, pos_y), walls)
             for nbr_x, nbr_y in nbrs:
                 frontier.append((nbr_x, nbr_y, dist + 1))
@@ -431,7 +434,7 @@ class OffensiveQLearningAgent(CaptureAgent):
 
     def get_q_value(self, game_state, action):
         features = self.get_features(game_state, action)
-        #print("features: ", features, "value: ", features * self.weights)
+        # print("features: ", features, "value: ", features * self.weights)
         return features * self.weights
 
     def update(self, game_state, action, nextState, reward):
@@ -488,7 +491,8 @@ class OffensiveQLearningAgent(CaptureAgent):
         enemies_reward = self.calculate_enemies_reward(game_state, nextState, agent_position)
 
         # Display individual rewards for debugging purposes
-        rewards = {"enemies": enemies_reward, "go_home": go_home_reward, "dist_to_food_reward": dist_to_food_reward, "score": score_reward}
+        rewards = {"enemies": enemies_reward, "go_home": go_home_reward, "dist_to_food_reward": dist_to_food_reward,
+                   "score": score_reward}
         print("REWARDS:", rewards)
 
         # Return the sum of all rewards
@@ -513,10 +517,8 @@ class OffensiveQLearningAgent(CaptureAgent):
         # print("Food carrying: ", amount_of_food_carrying )
         # print("Distance home: ", ((game_state.get_walls().width / 3) -  self.get_maze_distance(self.initial_position, agent_position)))
 
-        return amount_of_food_carrying / -((nextState.get_walls().width / 3) -  self.get_maze_distance(self.initial_position, agent_position))
-
-
-
+        return amount_of_food_carrying / -(
+                    (nextState.get_walls().width / 3) - self.get_maze_distance(self.initial_position, agent_position))
 
     def calculate_score_reward(self, game_state, nextState):
         """
@@ -607,7 +609,6 @@ class OffensiveQLearningAgent(CaptureAgent):
 
         return enemies_reward
 
-   
     def get_successor(self, game_state, action):
         """
         Finds the next successor which is a grid position (location tuple).
@@ -619,7 +620,7 @@ class OffensiveQLearningAgent(CaptureAgent):
             return successor.generate_successor(self.index, action)
         else:
             return successor
-        
+
     def final(self, state):
         CaptureAgent.final(self, state)
         with open('trained_agent_weights.pkl', 'wb') as file:
@@ -639,11 +640,11 @@ class OffensiveQLearningAgent(CaptureAgent):
         return self.get_q_value(game_state, bestAction)
 
     def compute_action_from_q_values(self, game_state):
-        
+
         legal_actions = game_state.get_legal_actions(self.index)
         if len(legal_actions) == 0:
             return None
-        
+
         actionVals = {}
         bestQValue = float('-inf')
         print("=============================")
@@ -656,7 +657,8 @@ class OffensiveQLearningAgent(CaptureAgent):
         bestActions = [k for k, v in actionVals.items() if v == bestQValue]
         # random tie-breaking
         return random.choice(bestActions)
-    
+
+
 class ReflexCaptureBaseAgent(CaptureAgent):
     """
     A base class for reflex agents that chooses score-maximizing actions
@@ -975,12 +977,70 @@ class DefensiveReflexCaptureAgent(ReflexCaptureBaseAgent):
         # Identify visible invaders
         invaders = [a for a in enemies if a.is_pacman and a.get_position() != None]
 
-        if len(invaders) == 0:
-            # When no visible invaders are present, use belief distribution for patrol actions
+        # Get the agent's state
+        my_state = game_state.get_agent_state(self.index)
+
+        # Check if the agent is scared
+        scared = my_state.scared_timer > 5
+
+        if scared and invaders:
+            # Avoid invaders when scared
+            return self.avoid_invader(game_state, actions)
+        elif len(invaders) == 0:
+            # Patrol based on belief distribution when there are no visible invaders
             return self.patrol_based_on_belief(game_state, actions)
         else:
-            # Use existing logic for when invaders are detected
+            # Default behavior
             return super().choose_action(game_state)
+
+    def avoid_invader(self, game_state, actions):
+        """
+        Avoids the closest invader by maintaining a safe buffer distance.
+
+        Args:
+            game_state (GameState): The current game state.
+            actions (list): List of legal actions the agent can take.
+
+        Returns:
+            str: The chosen action for avoiding the closest invader.
+        """
+        # Get the agent's current position and the positions of all visible invaders
+        my_pos = game_state.get_agent_position(self.index)
+        enemies = [game_state.get_agent_state(i) for i in self.get_opponents(game_state)]
+        invaders = [(a, a.get_position()) for a in enemies if a.is_pacman and a.get_position() is not None]
+
+        # Safe buffer distance
+        safe_distance = 5
+
+        # Calculate distance to closest invader
+        closest_invader_distance = float('inf')
+        closest_invader_pos = None
+        for invader, pos in invaders:
+            distance = self.get_maze_distance(my_pos, pos)
+            if distance < closest_invader_distance:
+                closest_invader_distance = distance
+                closest_invader_pos = pos
+
+        # If no invader is found, return a random action
+        if closest_invader_pos is None:
+            return random.choice(actions)
+
+        # Choose action that maintains the safe buffer distance
+        best_action = None
+        best_distance_diff = float('inf')
+        for action in actions:
+            successor = self.get_successor(game_state, action)
+            next_pos = successor.get_agent_state(self.index).get_position()
+            distance = self.get_maze_distance(next_pos, closest_invader_pos)
+
+            # Calculate the difference from the safe distance
+            distance_diff = abs(distance - safe_distance)
+
+            if distance_diff < best_distance_diff:
+                best_distance_diff = distance_diff
+                best_action = action
+
+        return best_action
 
     def patrol_based_on_belief(self, game_state, actions):
         """
