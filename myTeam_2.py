@@ -996,6 +996,9 @@ class DefensiveQLearningAgent(CaptureAgent):
         self.weights = self.load_weights()  # load or initialize weights
         # Initialize the initial amount of food
         self.current_food_defending = None
+        # Additional attributes for cumulative reward and unique identifier
+        self.cumulative_reward = 0
+        self.training_id = str(uuid.uuid4())  # Generate a unique identifier
     def get_food_you_are_defending(self, game_state):
         """
         Returns the food you're meant to protect (i.e., that your opponent is
@@ -1109,12 +1112,45 @@ class DefensiveQLearningAgent(CaptureAgent):
             self.obs[enemy] = all_obs
 
     def load_weights(self):
-        # Load weights from file or initialize to default values
-        try:
-            with open('./defensive_agent_weights.pkl', 'rb') as file:
-                return pickle.load(file)
-        except (FileNotFoundError, IOError):
-            return {'invaderDistance': -4.9843372922, 'food_defending': -34.9843372922}
+        if not defensive_weights:
+            # Load weights from file or initialize to default values
+            json_files = glob.glob('training_results/defensive_agent_weights_*.json')
+            if not json_files:
+                # Generate weights randomly
+                food_defending_weight = random.uniform(-10, 0)  # Random number between -10 and 0
+                invaderDistance_weight = random.uniform(-10, food_defending_weight)  # Smaller than food_defending_weight
+                closest_entry_point_weight = random.uniform(-10, invaderDistance_weight)  # Smallest of all
+
+                return {
+                    'food_defending': food_defending_weight,
+                    'invaderDistance': invaderDistance_weight,
+                    'closest_entry_point': closest_entry_point_weight
+                }
+            # Find the most recent file
+            latest_file = max(json_files, key=os.path.getctime)
+            
+            # Extract training ID from the filename
+            training_id = os.path.basename(latest_file).split('_')[3].split('.')[0]
+
+            # Load the corresponding weights file
+            weights_file = f'training_results/defensive_agent_weights_{training_id}.json'
+            if os.path.exists(weights_file):
+                with open(weights_file, 'r') as file:
+                    return json.load(file)
+            else:
+                # Generate weights randomly
+                food_defending_weight = random.uniform(-10, 0)  # Random number between -10 and 0
+                invaderDistance_weight = random.uniform(-10, food_defending_weight)  # Smaller than food_defending_weight
+                closest_entry_point_weight = random.uniform(-10, invaderDistance_weight)  # Smallest of all
+
+                return {
+                    'food_defending': food_defending_weight,
+                    'invaderDistance': invaderDistance_weight,
+                    'closest_entry_point': closest_entry_point_weight
+                }
+        else:
+            with open(defensive_weights, 'r') as file:
+                    return json.load(file)
 
     def getQValue(self, state, action):
         features = self.get_features(state, action)
@@ -1196,7 +1232,36 @@ class DefensiveQLearningAgent(CaptureAgent):
         correction = reward + self.gamma * self.compute_value_from_q_values(nextState) - self.getQValue(state, action)
         features = self.get_features(state, action)
         for feature in features:
-            self.weights[feature] += self.alpha * correction * features[feature]
+            # Check for NaN or Inf in correction and feature value
+            if not np.isnan(correction) and not np.isnan(features[feature]):
+                weight_update = self.alpha * correction * features[feature]
+                # Clip the weight update to prevent extreme changes
+                weight_update = np.clip(weight_update, -10, 10)  # Adjust the range as necessary
+                self.weights[feature] += weight_update
+                # Round and check for NaN
+                self.weights[feature] = round(self.weights[feature], 3)
+                if np.isnan(self.weights[feature]):
+                    self.weights[feature] = 0  # Reset to zero or some default value in case of NaN
+        # Update cumulative reward if in training mode
+        if TRAINING_defensive:
+            self.cumulative_reward += reward
+    def save_cumulative_reward(self):
+        # Ensure the directory exists
+        os.makedirs('training_results', exist_ok=True)
+        file_path = f'training_results/cumulative_rewards.csv'
+
+        # Check if the file already exists and has content
+        write_header = not os.path.exists(file_path) or os.stat(file_path).st_size == 0
+
+        with open(file_path, 'a', newline='') as file:
+            writer = csv.writer(file)
+            
+            # Write the header only if needed
+            if write_header:
+                writer.writerow(['Training ID', 'Cumulative Reward'])
+
+            # Append the data row
+            writer.writerow([self.training_id, self.cumulative_reward])
 
     def compute_value_from_q_values(self, state):
         legal_actions = state.get_legal_actions(self.index)
@@ -1416,6 +1481,48 @@ class DefensiveQLearningAgent(CaptureAgent):
 
         # Check if the distance is within the specified number of steps
         return distance <= steps
+    def get_eating_enemy_reward(self, game_state, nextState):
+        """
+        Calculates the reward for eating an enemy invader in the agent's territory.
+
+        Args:
+            game_state (GameState): The current game state.
+            nextState (GameState): The game state after taking an action.
+
+        Returns:
+            float: The reward for eating an enemy.
+        """
+        reward = 0.0
+        my_pos = nextState.get_agent_position(self.index)
+        current_invaders = self.get_invaders(game_state)
+        next_invaders = self.get_invaders(nextState)
+
+        # Check if the number of invaders has decreased, implying an enemy was eaten
+        if len(next_invaders) < len(current_invaders):
+            # Check if the agent's position coincides with one of the invader's last known positions
+            for invader in current_invaders:
+                if my_pos == invader.get_position():
+                    reward += 1.0  # Assign a significant positive reward for eating an invader
+                    break
+        if reward > 0: 
+            return reward 
+        else: return -1.0
+        
+
+    def get_invaders(self, game_state):
+        """
+        Identifies invaders in the agent's territory.
+
+        Args:
+            game_state (GameState): The current game state.
+
+        Returns:
+            list: A list of enemy agent states who are invaders.
+        """
+        enemies = [game_state.get_agent_state(i) for i in self.get_opponents(game_state)]
+        invaders = [a for a in enemies if a.is_pacman and a.get_position() != None]
+        return invaders
+
     def get_num_of_ghost_in_proximity(self, game_state, action):
         """
         Get the number of ghosts in proximity after taking a specific action.
@@ -1470,6 +1577,11 @@ class DefensiveQLearningAgent(CaptureAgent):
 
         # Count the number of ghosts within 1 steps from the new position
         return sum(self.is_ghost_within_steps((next_x, next_y), g, 1, walls) for g in ghosts)
+    def get_distance_to_closest_entry_point(self, game_state, action):
+        my_pos = self.get_successor(game_state, action).get_agent_state(self.index).get_position()
+        distances = [self.get_maze_distance(my_pos, entry) for entry in self.entry_points]
+        return min(distances) if distances else 0
+
     def get_features(self, game_state, action):
         # Define and extract features relevant for defense
         features = util.Counter()
@@ -1478,6 +1590,8 @@ class DefensiveQLearningAgent(CaptureAgent):
         features['invaderDistance'] = invader_distance
         # get my amount of food
         features['food_defending'] = len(self.get_food_you_are_defending(game_state))
+        features['closest_entry_point'] = self.get_distance_to_closest_entry_point(game_state, action)
+
         return features
     def get_eaten_reward(self, nextState):
         my_pos = nextState.get_agent_position(self.index)
@@ -1487,34 +1601,54 @@ class DefensiveQLearningAgent(CaptureAgent):
         ghosts = [a.get_position() for a in enemies if a.is_pacman and a.get_position() is not None and is_scared ]
         if len(ghosts) == 0:
             #no ghosts near to me for the nex state
-            return 20
+            return 0.6
         else:
             for en_idx in enemies_idx:
-                en_pos = nextState.get_agent_position(self.en_idx)
+                en_pos = nextState.get_agent_position(en_idx)
                 if en_pos == my_pos:
                     # a ghost can eat me in the next state
-                    return -20
+                    return -0.6
             #no ghosts near to me for the nex state
-            return 20
+            return 0.6
     def get_reward(self, game_state, nextState):
-        # Define the reward function for the defensive agent
+        # Existing reward calculation
         reward = 0.0
-        # Reward for when the food I am defending is decreasing
         current_food = self.get_food_you_are_defending(game_state)
         future_food = self.get_food_you_are_defending(nextState)
         
-        if self.check_food_difference(current_food,future_food):
-            reward += -50
+        if self.check_food_difference(current_food, future_food):
+            reward += -0.4
         else:
-            reward += 50
-        # Example: penalize letting an invader pass
+            reward += 0.4
+
         get_eaten_reward = self.get_eaten_reward(nextState)
         reward += get_eaten_reward
-        # Add more reward conditions as needed
+        # Add the reward for eating an enemy invader
+        reward += self.get_eating_enemy_reward(game_state, nextState)
+
+        # Adjust the reward based on the game score
+        score = nextState.data.score  # This retrieves the current score
+        score_adjustment = -score / 10.0  # Example: scale down the score's impact
+        reward += score_adjustment
+
         return reward
 
     def final(self, state):
         # Save weights to file
         CaptureAgent.final(self, state)
-        with open('defensive_agent_weights.pkl', 'wb') as file:
-            pickle.dump(self.weights, file)
+        #with open('defensive_agent_weights.pkl', 'wb') as file:
+        #    pickle.dump(self.weights, file)
+
+        # Save cumulative reward to CSV
+        if TRAINING_defensive:
+            self.save_cumulative_reward()
+
+        # Save weights to a specific directory with the training ID
+        weights_path = f'training_results/defensive_agent_weights_{self.training_id}.json'
+        with open(weights_path, 'w') as file:
+            json.dump(self.weights, file)
+
+        text_to_write = 'invaderDistance = {0}, food_defending = {1}, closest_entry_point = {2}'.format(self.weights['invaderDistance'],self.weights['food_defending'],self.weights['closest_entry_point'])
+        with open('weights_tracking.txt', 'a') as file:
+            # Write the string to the file
+            file.write(text_to_write+'\n')
