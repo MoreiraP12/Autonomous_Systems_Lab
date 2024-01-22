@@ -19,13 +19,21 @@ import game
 from util import nearestPoint
 import pickle
 import numpy as np
+import json
+
+import csv
+import uuid
+import os
+import glob
 
 #################
 # Team creation #
 #################
 
 TRAINING_offensive = False
-TRAINING_defensive = True
+TRAINING_defensive = False
+defensive_weights = 'training_results_4\defensive_agent_weights_613de35e-a3b5-4f6b-bbe5-579884aa87f0.json'
+offensive_weights  = 'default_offensive_weights.json'
 def create_team(firstIndex, secondIndex, isRed,
                 first='OffensiveQLearningAgent', second='DefensiveQLearningAgent', **args):
     """
@@ -88,55 +96,97 @@ class OffensiveQLearningAgent(CaptureAgent):
     contribute to its effectiveness as an offensive player.
 
     """
-    def load_weights(self):
-        '''
-        Load the trained weights from a file, or provide default weights if the file is not found.
 
-        Returns:
-            dict: A dictionary containing the loaded or default weights.
-        '''
+    '''def load_weights(self):
         # Initialize weights to None
         weights = None
-        
-        try:
-            # Try to open the file and load weights from it
-            with open('./trained_agent_weights.pkl', 'rb') as file:
-                weights = pickle.load(file)
-            
-        except (FileNotFoundError, IOError):
-            # If the file is not found or an error occurs, provide default weights
-            weights = {
-                'bias': -10.23232322332,
-                'food_close': -2.983928392083,
-                'ghosts_close': -34.9843372922,
-                'food_eaten': 12.12232122121,
-                'carrying_food_go_home': 1.02389123231
-            }
-        
-        return weights
 
-    
+        # try:
+        #     # Try to open the file and load weights from it
+        #     with open('./trained_agent_weights.pkl', 'rb') as file:
+        #         weights = pickle.load(file)
+
+        # except (FileNotFoundError, IOError):
+        # If the file is not found or an error occurs, provide default weights
+        weights = {
+            'bias': -9.1234412,
+            'food_close': -2.983928392083,
+            'ghosts_close': -3.65065432233,
+            'food_eaten': 15.12232122121,
+            'carrying_food_go_home': 1.822389123231
+        }
+
+        return weights'''
+    def load_weights(self):
+        if not offensive_weights:
+            # Load weights from file or initialize to default values
+            json_files = glob.glob('training_results_offensive/offensive_agent_weights_*.json')
+            if not json_files:
+                # Generate weights randomly
+                food_eaten = random.uniform(-16, 16)  # Random number between -10 and 0
+                carrying_food_go_home = random.uniform(-16, food_eaten)  # Smaller than food_defending_weight
+                food_close = random.uniform(-16, carrying_food_go_home)  # Smallest of all
+                ghosts_close = random.uniform(-16, food_close)
+                bias = random.uniform(-16, ghosts_close)
+
+                return {
+                    'bias': bias,
+                    'food_close': food_close,
+                    'ghosts_close': ghosts_close,
+                    'food_eaten': food_close,
+                    'carrying_food_go_home': carrying_food_go_home
+                }
+            # Find the most recent file
+            latest_file = max(json_files, key=os.path.getctime)
+            
+            # Extract training ID from the filename
+            training_id = os.path.basename(latest_file).split('_')[3].split('.')[0]
+
+            # Load the corresponding weights file
+            weights_file = f'training_results_offensive/offensive_agent_weights_{training_id}.json'
+            if os.path.exists(weights_file):
+                with open(weights_file, 'r') as file:
+                    return json.load(file)
+            else:
+                # Generate weights randomly
+                food_eaten = random.uniform(-16, 16)  # Random number between -10 and 0
+                carrying_food_go_home = random.uniform(-16, food_eaten)  # Smaller than food_defending_weight
+                food_close = random.uniform(-16, carrying_food_go_home)  # Smallest of all
+                ghosts_close = random.uniform(-16, food_close)
+                bias = random.uniform(-16, ghosts_close)
+
+                return {
+                    'bias': bias,
+                    'food_close': food_close,
+                    'ghosts_close': ghosts_close,
+                    'food_eaten': food_close,
+                    'carrying_food_go_home': carrying_food_go_home
+                }
+        else:
+            with open(offensive_weights, 'r') as file:
+                    return json.load(file)
+
     def register_initial_state(self, game_state):
-        #Important variables related to the Q learning algorithm
-        #When playing we don't want any exploration, strictly on policy
-        if TRAINING_offensive: self.epsilon = 0.15
-        else: 
+        # Important variables related to the Q learning algorithm
+        # When playing we don't want any exploration, strictly on policy
+        if TRAINING_offensive:
+            self.epsilon = 0.15
+        else:
             self.epsilon = 0
         self.alpha = 0.2
         self.discount = 0.8
         self.weights = self.load_weights()
 
-        
         self.initial_position = game_state.get_agent_position(self.index)
         self.legal_positions = game_state.get_walls().as_list(False)
-
+        self.cumulative_reward = 0
         CaptureAgent.register_initial_state(self, game_state)
 
-        #Initialize the Bayesian Inference for the ghost positions
+        # Initialize the Bayesian Inference for the ghost positions
         self.obs = {enemy: util.Counter() for enemy in self.get_opponents(game_state)}
         for enemy in self.get_opponents(game_state):
             self.obs[enemy][game_state.get_initial_agent_position(enemy)] = 1.0
-    
+
     def run_home_action(self, game_state):
         """
         Choose the action that brings the agent closer to its initial position.
@@ -168,7 +218,6 @@ class OffensiveQLearningAgent(CaptureAgent):
         # Return the best action that brings the agent closer to its initial position
         return bestAction
 
-    
     def choose_action(self, game_state):
         """
         Choose an action based on the Q-values and exploration-exploitation strategy.
@@ -187,14 +236,14 @@ class OffensiveQLearningAgent(CaptureAgent):
             return None
 
         # If the agent has collected enough food to win, always return home
-        food_left = len(self.get_food(game_state).as_list())
-        if food_left <= 2:
-            return self.run_home_action(game_state)
+        # food_left = len(self.get_food(game_state).as_list())
+        # if food_left <= 2:
+        #     return self.run_home_action(game_state)
 
         # If the agent is carrying a significant amount of food, prioritize returning home
-        original_agent_state = game_state.get_agent_state(self.index)
-        if original_agent_state.num_carrying > 3:
-            return self.run_home_action(game_state)
+        # original_agent_state = game_state.get_agent_state(self.index)
+        # if original_agent_state.num_carrying > 3:
+        #     return self.run_home_action(game_state)
 
         # If in training mode, update weights based on the current state and actions
         if TRAINING_offensive:
@@ -229,46 +278,7 @@ class OffensiveQLearningAgent(CaptureAgent):
 
         # Check if the distance is within the specified number of steps
         return distance <= steps
-    
-    def is_red_team(self, game_state):
-        """
-        Check if the agent is on the red team.
 
-        Args:
-            game_state (GameState): The current game state.
-
-        Returns:
-            bool: True if the agent is on the red team, False otherwise.
-        """
-        return self.index in game_state.red_team
-    
-    def get_zone_map(self, game_state, is_red_team):
-        """
-        Create a binary 2D array representing the safe zone and danger zone.
-
-        Args:
-            game_state (GameState): The current game state.
-            is_red_team (bool): True if your team is the red team, False if blue.
-
-        Returns:
-            List[List[int]]: A 2D array with 0's indicating your safe zone and 1's indicating the enemy's zone.
-        """
-        walls = game_state.get_walls()
-        width, height = walls.width, walls.height
-        mid_x = width // 2
-
-        # Create a 2D array initialized to 0
-        zone_map = [[0 for _ in range(height)] for _ in range(width)]
-
-        # Fill the enemy's half with 1's
-        start_x = mid_x if is_red_team else 0
-        end_x = width if is_red_team else mid_x
-        for x in range(start_x, end_x):
-            for y in range(height):
-                if not walls[x][y]:  # Only mark non-wall positions
-                    zone_map[x][y] = 1
-
-        return zone_map
     def get_num_of_ghost_in_proximity(self, game_state, action):
         """
         Get the number of ghosts in proximity after taking a specific action.
@@ -288,31 +298,14 @@ class OffensiveQLearningAgent(CaptureAgent):
         ghosts = [a.get_position() for a in enemies if not a.is_pacman and a.get_position() is not None]
 
         # Update ghost positions using Bayesian inference if no ghosts are currently visible
-        red_team_bool = self.is_red_team(game_state)
-        zone_map = self.get_zone_map(game_state, red_team_bool)
         max_vals = list()
         if len(ghosts) == 0:
             for e_idx in enemies_idx:
                 self.observe(e_idx, game_state)
                 self.elapse_time(e_idx, game_state)
                 belief_dist_e = self.obs[e_idx]
-                #Previous approach
-                #max_position, max_prob = max(belief_dist_e.items(), key=lambda item: item[1])
-                #max_vals.append(max_position)
-                #New approach: get top 4 danger zones in the map and set them as "danger zones" possibly ghosts
-                # Filter and sort items with values greater than 0
-                filtered_sorted_items = sorted(
-                    [(position, prob) for position, prob in belief_dist_e.items() if prob > 0],
-                    key=lambda item: item[1], 
-                    reverse=True
-                )
-                # Get the top 4 or fewer items
-                top_items = filtered_sorted_items[:min(4, len(filtered_sorted_items))]
-                for item in top_items:
-                    (col,row) = item[0]
-                    #only append enemies when they are in the danger zone
-                    if zone_map[col][row]==1:
-                        max_vals.append(item[0])  # Append each item in top_items to max_vals'''
+                max_position, max_prob = max(belief_dist_e.items(), key=lambda item: item[1])
+                max_vals.append(max_position)
             ghosts = list(set(max_vals))
 
         # Get the agent's position after taking the specified action
@@ -321,10 +314,10 @@ class OffensiveQLearningAgent(CaptureAgent):
         dx, dy = Actions.direction_to_vector(action)
         next_x, next_y = int(x + dx), int(y + dy)
 
-        # Count the number of ghosts within 5 steps from the new position
-        return sum(self.is_ghost_within_steps((next_x, next_y), g, 5, walls) for g in ghosts)
-    
-    def calculate_carrying_food_go_home_feature(self, game_state, agent_position):
+        # Count the number of ghosts within 3 steps from the new position
+        return sum(self.is_ghost_within_steps((next_x, next_y), g, 3, walls) for g in ghosts)
+
+    def calculate_carrying_food_go_home_feature(self, game_state, agent_position, action):
         """
         Calculate a feature indicating the desirability of going near home when carrying food.
 
@@ -335,59 +328,18 @@ class OffensiveQLearningAgent(CaptureAgent):
         Returns:
             float: The calculated feature value.
         """
-        # Calculate the midpoint of the map's width
-        midpoint_x = game_state.get_walls().width // 2
+        x, y = agent_position
+        dx, dy = Actions.direction_to_vector(action)
+        next_x, next_y = int(x + dx), int(y + dy)
 
-        # Adjust border_x based on the team
-        border_x = midpoint_x - 1 if self.red else midpoint_x
-        border_x = max(0, min(border_x, game_state.get_walls().width - 1))
-
-        # Calculate the center y-coordinate of the map
-        center_y = game_state.get_walls().height // 2
-
-        # Get the agent's state in the current game state
         original_agent_state = game_state.get_agent_state(self.index)
-
-        # Find the desired y-coordinate and the best distance to it
-        desired_y, best_dist = self.find_desired_y(game_state, agent_position, border_x)
-        x_agent, _ = agent_position
-        base_distance = best_dist if x_agent > border_x - 1 else 0
-
-        # Get the amount of food the agent is currently carrying
         amount_of_food_carrying = original_agent_state.num_carrying
+        # print("Food carrying: ", amount_of_food_carrying )
+        # print("Distance home: ", ((game_state.get_walls().width / 3) -  self.get_maze_distance(self.initial_position, agent_position)))
 
-        # Calculate the carrying_food_go_home feature based on the formula
-        carrying_food_go_home_feature = (amount_of_food_carrying + 2 * ((100 - 1 - base_distance))) / 10
-
-        return carrying_food_go_home_feature
-
-    def find_desired_y(self, game_state, agent_position, border_x):
-        """
-        Find the desired y-coordinate for going near home when carrying food.
-
-        Args:
-            game_state (GameState): The current game state.
-            agent_position (tuple): The current position of the agent.
-            border_x (int): The x-coordinate of the border.
-
-        Returns:
-            tuple: A tuple containing the desired y-coordinate and the best distance.
-        """
-        desired_y = 0
-        best_dist = 999999
-
-        # Iterate over possible y-coordinates within the map's height
-        for i in range(1, game_state.get_walls().height - 1):
-            if (border_x, i) in self.legal_positions:
-                # Calculate the distance to the current y-coordinate
-                dist = self.get_maze_distance(agent_position, (border_x, i))
-
-                # Update the desired y-coordinate and best distance if the current distance is smaller
-                if dist < best_dist:
-                    desired_y = i
-                    best_dist = dist
-
-        return desired_y, best_dist
+        return amount_of_food_carrying / -(
+                    (game_state.get_walls().width / 3) - self.get_maze_distance(self.initial_position,
+                                                                                (next_x, next_y)))
 
     def get_features(self, game_state, action):
         """
@@ -412,12 +364,11 @@ class OffensiveQLearningAgent(CaptureAgent):
         # Set a bias feature with a constant value
         features["bias"] = 1.0
 
+        features["score"] = 1.0
         # Get the number of ghosts in proximity and set a feature accordingly
         features["ghosts_close"] = self.get_num_of_ghost_in_proximity(game_state, action)
-        if features["ghosts_close"] == 0:
-            features["food_eaten"] = 1.0
-        else:
-            features["food_eaten"] = 0
+
+        features["food_eaten"] = 1.0
 
         # Calculate the distance to the closest food and set a feature accordingly
         dist = self.closest_food((next_x, next_y), self.get_food(game_state), game_state.get_walls())
@@ -425,7 +376,8 @@ class OffensiveQLearningAgent(CaptureAgent):
             features["food_close"] = float(dist) / (game_state.get_walls().width * game_state.get_walls().height)
 
         # Calculate the carrying_food_go_home feature and set the corresponding feature
-        features["carrying_food_go_home"] = self.calculate_carrying_food_go_home_feature(game_state, agent_position)
+        features["carrying_food_go_home"] = self.calculate_carrying_food_go_home_feature(game_state, agent_position,
+                                                                                         action)
 
         return features
 
@@ -437,10 +389,10 @@ class OffensiveQLearningAgent(CaptureAgent):
             if (pos_x, pos_y) in expanded:
                 continue
             expanded.add((pos_x, pos_y))
-      
+
             if food[pos_x][pos_y]:
                 return dist
- 
+
             nbrs = Actions.get_legal_neighbors((pos_x, pos_y), walls)
             for nbr_x, nbr_y in nbrs:
                 frontier.append((nbr_x, nbr_y, dist + 1))
@@ -531,6 +483,7 @@ class OffensiveQLearningAgent(CaptureAgent):
 
     def get_q_value(self, game_state, action):
         features = self.get_features(game_state, action)
+        # print("features: ", features, "value: ", features * self.weights)
         return features * self.weights
 
     def update(self, game_state, action, nextState, reward):
@@ -545,8 +498,11 @@ class OffensiveQLearningAgent(CaptureAgent):
         for feature in features:
             if feature not in self.weights:
                 self.weights[feature] = 0  # Initialize with a default value, like 0
-            newWeight = self.alpha * difference * features[feature]
+            newWeight = np.clip(self.alpha * difference * features[feature], -16, 16)
             self.weights[feature] += newWeight
+        # Update cumulative reward if in training mode
+        if TRAINING_defensive:
+            self.cumulative_reward += reward
         # print(self.weights)
 
     def update_weights(self, game_state, action):
@@ -581,44 +537,40 @@ class OffensiveQLearningAgent(CaptureAgent):
         agent_position = game_state.get_agent_position(self.index)
 
         # Calculate rewards for different aspects and sum them up
-        go_home_reward = self.calculate_go_home_reward(game_state, agent_position)
+        go_home_reward = self.calculate_carrying_food_go_home_reward(nextState)
         score_reward = self.calculate_score_reward(game_state, nextState)
         dist_to_food_reward = self.calculate_dist_to_food_reward(game_state, nextState, agent_position)
         enemies_reward = self.calculate_enemies_reward(game_state, nextState, agent_position)
 
         # Display individual rewards for debugging purposes
-        rewards = {"enemies": enemies_reward, "go_home": go_home_reward, "dist_to_food_reward": dist_to_food_reward, "score": score_reward}
-        print(rewards)
-        total_reward = sum(rewards.values())
-        # Return the sum of all rewards
-        return total_reward
+        rewards = {"enemies": enemies_reward, "go_home": go_home_reward, "dist_to_food_reward": dist_to_food_reward,
+                   "score": score_reward}
+        print("REWARDS:", rewards)
 
-    def calculate_go_home_reward(self, game_state, agent_position):
+        # Return the sum of all rewards
+        return sum(rewards.values())
+
+    def calculate_carrying_food_go_home_reward(self, nextState):
         """
-        Calculate the reward for going near home based on the amount of food carried and the distance to home.
+        Calculate a feature indicating the desirability of going near home when carrying food.
 
         Args:
             game_state (GameState): The current game state.
             agent_position (tuple): The current position of the agent.
 
         Returns:
-            float: The calculated reward for going near home.
+            float: The calculated feature value.
         """
-        # Calculate the midpoint of the map's width
-        midpoint_x = game_state.get_walls().width // 2
 
-        # Adjust border_x based on the team
-        border_x = midpoint_x - 1 if self.red else midpoint_x
-        border_x = max(0, min(border_x, game_state.get_walls().width - 1))
+        original_agent_state = nextState.get_agent_state(self.index)
+        amount_of_food_carrying = original_agent_state.num_carrying
 
-        # Calculate the center y-coordinate of the map
-        center_y = game_state.get_walls().height // 2
+        agent_position = nextState.get_agent_position(self.index)
+        # print("Food carrying: ", amount_of_food_carrying )
+        # print("Distance home: ", ((game_state.get_walls().width / 3) -  self.get_maze_distance(self.initial_position, agent_position)))
 
-        # Get the agent's state in the current game state
-        original_agent_state = game_state.get_agent_state(self.index)
-
-        # Calculate and return the go_home reward based on the formula
-        return (original_agent_state.num_carrying * 3) * (10 - self.get_maze_distance(agent_position, (border_x, center_y)))
+        return amount_of_food_carrying / -(
+                    (nextState.get_walls().width / 3) - self.get_maze_distance(self.initial_position, agent_position))
 
     def calculate_score_reward(self, game_state, nextState):
         """
@@ -705,11 +657,10 @@ class OffensiveQLearningAgent(CaptureAgent):
                 next_pos = nextState.get_agent_state(self.index).get_position()
                 if next_pos == self.initial_position:
                     # Update the enemies_reward
-                    enemies_reward = -500
+                    enemies_reward = -50
 
         return enemies_reward
 
-   
     def get_successor(self, game_state, action):
         """
         Finds the next successor which is a grid position (location tuple).
@@ -721,11 +672,31 @@ class OffensiveQLearningAgent(CaptureAgent):
             return successor.generate_successor(self.index, action)
         else:
             return successor
-        
+    def save_cumulative_reward(self, training_id):
+        # Ensure the directory exists
+        os.makedirs('training_results_offensive', exist_ok=True)
+        file_path = f'training_results_offensive/offensive_cumulative_rewards.csv'
+
+        # Check if the file already exists and has content
+        write_header = not os.path.exists(file_path) or os.stat(file_path).st_size == 0
+
+        with open(file_path, 'a', newline='') as file:
+            writer = csv.writer(file)
+            if write_header:
+                writer.writerow(['Training ID', 'Cumulative Reward'])
+            writer.writerow([training_id, self.cumulative_reward])
+
     def final(self, state):
         CaptureAgent.final(self, state)
-        with open('trained_agent_weights.pkl', 'wb') as file:
-            pickle.dump(self.weights, file)
+        # Generate a unique identifier for the training session
+        if TRAINING_offensive:
+            training_id = str(uuid.uuid4())
+            self.save_cumulative_reward(training_id)
+            # Define the file path for saving the weights
+            weights_path = f'training_results_offensive/offensive_agent_weights_{training_id}.json'
+            # Save the weights to the specified file
+            with open(weights_path, 'w') as file:
+                json.dump(self.weights, file)
 
     def compute_value_from_q_values(self, game_state):
         """
@@ -741,14 +712,16 @@ class OffensiveQLearningAgent(CaptureAgent):
         return self.get_q_value(game_state, bestAction)
 
     def compute_action_from_q_values(self, game_state):
-        
+
         legal_actions = game_state.get_legal_actions(self.index)
         if len(legal_actions) == 0:
             return None
-        
+
         actionVals = {}
         bestQValue = float('-inf')
+        #print("=============================")
         for action in legal_actions:
+            #print("Action: ", action)
             target_q_value = self.get_q_value(game_state, action)
             actionVals[action] = target_q_value
             if target_q_value > bestQValue:
@@ -1139,9 +1112,9 @@ class DefensiveQLearningAgent(CaptureAgent):
                     return json.load(file)
             else:
                 # Generate weights randomly
-                food_defending_weight = random.uniform(-10, 0)  # Random number between -10 and 0
-                invaderDistance_weight = random.uniform(-10, food_defending_weight)  # Smaller than food_defending_weight
-                closest_entry_point_weight = random.uniform(-10, invaderDistance_weight)  # Smallest of all
+                food_defending_weight = random.uniform(-16, 0)  # Random number between -10 and 0
+                invaderDistance_weight = random.uniform(-16, food_defending_weight)  # Smaller than food_defending_weight
+                closest_entry_point_weight = random.uniform(-16, invaderDistance_weight)  # Smallest of all
 
                 return {
                     'food_defending': food_defending_weight,
@@ -1236,7 +1209,7 @@ class DefensiveQLearningAgent(CaptureAgent):
             if not np.isnan(correction) and not np.isnan(features[feature]):
                 weight_update = self.alpha * correction * features[feature]
                 # Clip the weight update to prevent extreme changes
-                weight_update = np.clip(weight_update, -10, 10)  # Adjust the range as necessary
+                weight_update = np.clip(weight_update, -16, 16)  # Adjust the range as necessary
                 self.weights[feature] += weight_update
                 # Round and check for NaN
                 self.weights[feature] = round(self.weights[feature], 3)
